@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Build output (compiled server). The pre-built dashboard in src/ui/dist is
+# committed on purpose so `npx github:xTycho/WEAVE` serves the UI instantly.
+dist/
+!src/ui/dist/
+!src/ui/dist/**
+
+# Local WEAVE state (per-project, never published)
+.claude/context-map.json
+.claude/*.local.json
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Logs & OS / editor noise
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.tsbuildinfo
+coverage/

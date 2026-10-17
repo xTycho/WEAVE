@@ -1,0 +1,84 @@
+:root {
+  --bg: #f6f7fb;
+  --surface: #ffffff;
+  --text: #171a26;
+  --muted: #646b80;
+  --border: #dfe2ec;
+  --core: #5b6cff;
+  --feature: #0ea5a4;
+  --context: #a855f7;
+  --live: #16a34a;
+  --severed: #dc2626;
+  --glow: #f59e0b;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1017;
+    --surface: #161a24;
+    --text: #e7e9f2;
+    --muted: #8c93a8;
+    --border: #262c3b;
+    --core: #7c8cff;
+    --feature: #2dd4bf;
+    --context: #c084fc;
+    --live: #4ade80;
+    --severed: #f87171;
+    --glow: #fbbf24;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--text); font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.muted { color: var(--muted); }
+
+.app { display: flex; flex-direction: column; height: 100%; }
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: 0.18em; }
+.brand-mark { width: 14px; height: 14px; border-radius: 50%; background: var(--core); box-shadow: 0 0 0 4px color-mix(in srgb, var(--core) 25%, transparent); }
+.stats { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; }
+.conn { padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); text-transform: uppercase; font-size: 11px; letter-spacing: 0.06em; }
+.conn-live { color: var(--live); border-color: var(--live); }
+.conn-offline { color: var(--severed); border-color: var(--severed); }
+
+.stage { position: relative; flex: 1; display: flex; min-height: 0; }
+.stage .react-flow { flex: 1; --xy-background-pattern-dots-color-default: var(--border); --xy-controls-button-background-color-default: var(--surface); --xy-controls-button-color-default: var(--text); --xy-controls-button-border-color-default: var(--border); }
+.panel { width: 300px; max-width: 40vw; padding: 16px; border-left: 1px solid var(--border); background: var(--surface); overflow-y: auto; }
+.panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 8px; }
+.panel h2:not(:first-child) { margin-top: 20px; }
+.panel ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 4px; }
+.panel li code { word-break: break-all; }
+.error { color: var(--severed); }
+@media (max-width: 720px) {
+  .stage { flex-direction: column; }
+  .panel { width: 100%; max-width: none; max-height: 35vh; border-left: 0; border-top: 1px solid var(--border); }
+}
+
+.weave-node { --tier: var(--feature); min-width: 110px; padding: 8px 14px; border-radius: 12px; text-align: center; background: var(--surface); color: var(--text); border: 2px solid var(--tier); transition: opacity .25s, box-shadow .25s, transform .25s; cursor: pointer; }
+.weave-node.tier-core { --tier: var(--core); min-width: 140px; padding: 16px 18px; border-radius: 999px; font-weight: 700; cursor: default; }
+.weave-node.tier-context { --tier: var(--context); min-width: 90px; padding: 6px 10px; border-radius: 8px; font-size: 12px; }
+.weave-node.is-live { box-shadow: 0 0 0 3px color-mix(in srgb, var(--tier) 30%, transparent), 0 0 18px color-mix(in srgb, var(--tier) 45%, transparent); }
+.weave-node.is-idle { opacity: .55; border-style: dashed; }
+.weave-node.is-severed { opacity: .4; border-color: var(--severed); }
+.weave-node.is-glowing { animation: weave-glow 1.6s ease-out; }
+.weave-node-label { font-weight: 600; }
+.weave-node-meta { font-size: 11px; color: var(--muted); }
+.weave-handle { opacity: 0; pointer-events: none; }
+@keyframes weave-glow {
+  0% { box-shadow: 0 0 0 0 var(--glow), 0 0 32px 8px var(--glow); transform: scale(1.08); }
+  100% { box-shadow: 0 0 0 14px transparent, 0 0 0 0 transparent; transform: scale(1); }
+}
+
+.weave-cord path.react-flow__edge-path { stroke-width: 2; transition: stroke .25s, opacity .25s; }
+.weave-cord.cord-live path.react-flow__edge-path { stroke: var(--live); }
+.weave-cord.cord-idle path.react-flow__edge-path { stroke: var(--muted); opacity: .45; }
+.weave-cord.cord-severed path.react-flow__edge-path { stroke: var(--severed); stroke-dasharray: 3 7; opacity: .8; }
+.weave-cord.cord-glow path.react-flow__edge-path { stroke: var(--glow); stroke-width: 4; }
+.weave-cord:hover path.react-flow__edge-path { stroke-width: 4; cursor: pointer; }
+
+/* Cords attach node-centre to node-centre for a true concentric web. */
+.weave-node .react-flow__handle.weave-handle { top: 50%; left: 50%; bottom: auto; width: 1px; height: 1px; min-width: 0; min-height: 0; border: 0; transform: translate(-50%, -50%); }
+.react-flow__node-ring { pointer-events: none !important; }
+.weave-ring { border-radius: 50%; border: 1px dashed var(--border); }
