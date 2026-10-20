@@ -25,3 +25,8 @@ Thumbs.db
 .idea/
 *.tsbuildinfo
 coverage/
+
+# Created by running `weave init` on this repo itself: local, machine-specific
+.mcp.json
+CLAUDE.md
+.claude/
