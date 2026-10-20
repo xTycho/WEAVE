@@ -664,6 +664,12 @@ function signal(segs: ([string, string] | [string, string, boolean])[], verb: st
 
 // ---------- State from the server ----------
 function adopt(next: State) {
+  // A `weave ui` started before an update still sends the old state; say so instead of drawing a broken map.
+  if (!Array.isArray(next.areas) || !next.map?.settings || !("window" in next.map.settings)) {
+    world.querySelectorAll(".node,.empty-map").forEach((n) => n.remove());
+    world.insertAdjacentHTML("beforeend", '<div class="empty-map">The running WEAVE server is older than this page. Stop it (Ctrl+C) and run `weave ui` again.</div>');
+    return;
+  }
   const first = !S;
   S = next;
   // The WEAVE repo's own map would read "WEAVE WEAVE", so drop the chip when it repeats the mark.
