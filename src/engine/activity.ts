@@ -101,15 +101,18 @@ export function writeThread(paths: ProjectPaths, id: string, patch: Partial<Thre
  */
 export function transcriptTokens(transcript: string | undefined): number | undefined {
   if (!transcript) return undefined;
-  const lines = readTail(transcript, 128 * 1024).trimEnd().split("\n");
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if (!lines[i].includes('"usage"')) continue;
-    try {
-      const u = JSON.parse(lines[i])?.message?.usage;
-      if (u && typeof u.input_tokens === "number") {
-        return u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.output_tokens ?? 0);
-      }
-    } catch { /* skip */ }
+  // A single line can hold a screenshot or a long tool result, so widen the tail until a usage line turns up.
+  for (const size of [128 * 1024, 1024 * 1024, 8 * 1024 * 1024]) {
+    const lines = readTail(transcript, size).trimEnd().split("\n");
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (!lines[i].includes('"usage"')) continue;
+      try {
+        const u = JSON.parse(lines[i])?.message?.usage;
+        if (u && typeof u.input_tokens === "number") {
+          return u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.output_tokens ?? 0);
+        }
+      } catch { /* skip */ }
+    }
   }
   return undefined;
 }

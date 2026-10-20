@@ -11,7 +11,7 @@ interface Preset { id: string; name: string; color: string; features: string[]; 
 interface Thread { id: string; name: string; preset: string; startedAt: number; lastSeen: number; contextTokens?: number; context?: { level: "ok" | "heavy" | "full"; text?: string }; frozen?: string[]; next?: Handoff }
 interface Handoff { preset?: { id: string; name: string; share: number; tokens: number }; save?: { name: string; files: number }; read: number; edited: number; folders: string[]; line?: string }
 interface Suggestion { rule: string; node: string; attach: boolean; text: string; key: string }
-interface Settings { autoApply: boolean; warmCold: boolean; freeze: boolean; heavyAt: number; freshAt: number; gate: "flag" | "block"; idleAfter: number; defaultPreset: string }
+interface Settings { autoApply: boolean; warmCold: boolean; freeze: boolean; autoCalibrate: boolean; heavyAt: number; freshAt: number; gate: "flag" | "block"; idleAfter: number; defaultPreset: string }
 interface State {
   project: string;
   map: { nodes: WNode[]; presets: Preset[]; assign: Record<string, string>; settings: Settings };
@@ -103,17 +103,19 @@ const asleep = (n: WNode) => !!preset().asleep?.includes(n.id);
 const frozenIds = () => new Set(S?.map.settings.freeze ? S.threads.find((t) => t.id === selThread)?.frozen ?? [] : []);
 /** Highlights the overdue files on the map, like a search. */
 let showDue = false;
-/** Embers rising off a hot node. Fixed offsets, so a redraw never makes them jump. */
-const EMBERS = '<span class="embers" aria-hidden="true">' + [[12, 0, 2.6], [30, 1.1, 2.2], [48, .5, 3], [64, 1.7, 2.4], [80, .2, 2.8], [92, 1.4, 2.1]]
-  .map(([x, d, t]) => `<i style="--x:${x}%;--d:${d}s;--t:${t}s"></i>`).join("") + "</span>";
-/** Textures laid inside a node: a soft warmth for hot, a cool wash and a few drifting specks for frozen. Fixed offsets, like the embers. */
-const SKIN_HOT = '<span class="skin skin-hot" aria-hidden="true"></span>';
-const SKIN_FROST = '<span class="skin skin-frost" aria-hidden="true">' + [[14, 18, 0, 6.5], [38, 52, 2.6, 7.2], [63, 26, 1.3, 6.8], [86, 60, 3.9, 7.6]]
-  .map(([x, y, d, t]) => `<i style="--x:${x}%;--y:${y}%;--d:${d}s;--t:${t}s"></i>`).join("") + "</span>";
-/** Adds or removes one texture span so a redraw never restarts its animation. */
-function skin(d: HTMLElement, cls: string, html: string, on: boolean) {
-  const el = d.querySelector("." + cls);
-  if (on && !el) d.insertAdjacentHTML("afterbegin", html);
+/**
+ * Particle layers. Hot: a ring pulses outward and embers fly off the edge.
+ * Frozen: a ring collapses inward and specks drift from around the node into
+ * its core. Fixed angles and delays, so a redraw never makes them jump.
+ */
+const RAYS = [[-90, 0], [-38, 1.1], [12, .5], [58, 1.7], [104, .3], [150, 1.4], [200, .8], [246, 2]];
+const ray = (a: number, d: number) => { const r = (a * Math.PI) / 180, c = Math.cos(r), s = Math.sin(r); return `--ex:${(50 + c * 50).toFixed(1)}%;--ey:${(50 + s * 50).toFixed(1)}%;--ox:${(50 + c * 78).toFixed(1)}%;--oy:${(50 + s * 95).toFixed(1)}%;--dx:${(c * 26).toFixed(1)}px;--dy:${(s * 26).toFixed(1)}px;--d:${d}s`; };
+const FX_HOT = '<span class="fx fx-hot" aria-hidden="true"><b></b>' + RAYS.map(([a, d]) => `<i style="${ray(a, d)}"></i>`).join("") + "</span>";
+const FX_FROST = '<span class="fx fx-frost" aria-hidden="true"><b></b>' + RAYS.map(([a, d]) => `<i style="${ray(a + 22, d * 1.4)}"></i>`).join("") + "</span>";
+/** Adds or removes one particle layer so a redraw never restarts its animation. */
+function fx(d: HTMLElement, cls: string, html: string, on: boolean) {
+  const el = d.querySelector(":scope > ." + cls);
+  if (on && !el) d.insertAdjacentHTML("beforeend", html);
   else if (!on) el?.remove();
 }
 const coldIn = (n: WNode, warm: Set<string>) => warm.size > 0 && n.tier === "element" && n.kind !== "tool" && !warm.has(n.id) && isLive(n);
@@ -195,12 +197,9 @@ function draw() {
     d.classList.toggle("due", due.has(n.id));
     d.classList.toggle("asleep", asleep(n));
     d.classList.toggle("frozen", frost.has(n.id));
-    skin(d, "skin-frost", SKIN_FROST, frost.has(n.id));
-    const burning = hot.has(n.id), embers = d.querySelector(".embers");
-    d.classList.toggle("hot", burning);
-    skin(d, "skin-hot", SKIN_HOT, burning);
-    if (burning && !embers) d.insertAdjacentHTML("beforeend", EMBERS);
-    else if (!burning) embers?.remove();
+    fx(d, "fx-frost", FX_FROST, frost.has(n.id));
+    d.classList.toggle("hot", hot.has(n.id));
+    fx(d, "fx-hot", FX_HOT, hot.has(n.id));
     d.classList.toggle("sel", selected === n.id);
     d.classList.toggle("match", hits.has(n.id));
     setsFor(n, d);
@@ -415,17 +414,37 @@ let editing: "copy" | "rename" | null = null;
 /** The thread whose name is being typed; a live update must not wipe it. */
 let naming: string | null = null;
 
+/** Threads seen in the last day get a row; older ones fold under "older". */
+const RECENT = 864e5;
+let showOld = false;
+const ICON_NEW = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 2.5h4v4M13.5 2.5 8 8M6.5 3.5h-3a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-3"/></svg>';
+const ICON_MOVE = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6.5 8 10.5l4-4"/></svg>';
+
+/**
+ * One line per thread: what it is doing, its name, how full its context is,
+ * and, while it is working past the amber warning, a button that copies a
+ * start line for a new thread. Everything else lives in tooltips.
+ */
 function threadRow(t: Thread, p: Preset): HTMLLIElement {
   const li = document.createElement("li");
-  const verb = threadVerb(t.id), name = threadLabel(t);
+  const verb = threadVerb(t.id), name = threadLabel(t), live = working(t.id);
   const ctx = t.context?.level ?? "ok", frost = S!.map.settings.freeze ? t.frozen?.length ?? 0 : 0;
-  li.className = "thread" + (verb ? " busy" : working(t.id) ? " live" : "") + (ctx !== "ok" ? ` ctx-${ctx}` : "") + (t.id === selThread ? " sel" : "");
+  const st = S!.map.settings, tok = t.contextTokens ?? 0;
+  li.className = "thread" + (verb ? " busy" : live ? " live" : "") + ` ctx-${ctx}` + (t.id === selThread ? " sel" : "");
   li.style.setProperty("--c", p.color);
+  li.style.setProperty("--fill", String(Math.min(1, tok / st.freshAt)));
+  const state = verb ? VERB_ING[verb] : live ? "Working" : `Idle since ${new Date(t.lastSeen).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  const meter = tok ? `${fmt(tok)} tokens in context. Amber from ${fmt(st.heavyAt)}, red from ${fmt(st.freshAt)}.` : "Context size not read yet.";
+  const tip = `${name}\n${state}. ${meter}${frost ? `\n${frost} file${frost === 1 ? "" : "s"} frozen.` : ""}\nClick to show its frozen files on the map. Double-click to rename.`;
+  // Only a thread that is working gets the hand-off button; an idle thread's red bar says enough.
+  const h = live ? t.next : undefined;
+  const hTip = !h ? "" : h.preset ? `New thread on ${h.preset.name}: copies a start line. ${h.preset.name} holds ${Math.round(h.preset.share * 100)}% of what this thread used, ~${fmt(h.preset.tokens)} tokens.`
+    : h.save ? `New thread: no saved preset fits under ${fmt(st.heavyAt)}, so this saves its ${h.save.files} warm files as "${h.save.name}" and copies a start line.` : "";
   li.innerHTML = `<span class="ticon"><canvas class="orb" width="32" height="32" data-session="${esc(t.id)}" aria-hidden="true"></canvas><i></i></span>`
-    + `<button class="tmain" aria-pressed="${t.id === selThread}" title="${esc(name)}. ${t.id === selThread ? "Click to stop showing its frozen files" : "Click to show its frozen files on the map"}, double-click to rename."><b>${esc(name)}</b></button>`
-    + `<small class="tstat" title="${t.contextTokens ? `${fmt(t.contextTokens)} tokens in this thread's context` : ""}">${verb ? VERB_ING[verb] : working(t.id) ? "Working" : "Idle"}${t.contextTokens ? ` · ${fmt(t.contextTokens)}` : ""}${frost ? ` · ${frost} frozen` : ""}</small>`
-    + `<select aria-label="Preset for ${esc(name)}" title="Move this thread to another preset">${S!.map.presets.map((x) => `<option value="${esc(x.id)}" ${x.id === t.preset ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select>`
-    + `${t.context?.text ? `<p class="cwarn">${esc(t.context.text)}</p>` : ""}`;
+    + `<button class="tmain" aria-pressed="${t.id === selThread}" title="${esc(tip)}">${esc(name)}</button>`
+    + `<span class="tbar" title="${esc(meter)}"><i></i><small>${tok ? fmt(tok).replace(/\.\dk$/, "k") : ""}</small></span>`
+    + (hTip ? `<button class="ibtn new" title="${esc(hTip)}" aria-label="${esc(hTip)}">${ICON_NEW}</button>` : "<span hidden></span>")
+    + `<label class="ibtn move" title="Move to another preset">${ICON_MOVE}<select aria-label="Preset for ${esc(name)}">${S!.map.presets.map((x) => `<option value="${esc(x.id)}" ${x.id === t.preset ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>`;
   const main = li.querySelector<HTMLButtonElement>(".tmain")!;
   main.addEventListener("click", (e) => { if (e.detail > 1) return; selThread = selThread === t.id ? null : t.id; store.set("weave.thread", selThread ?? ""); renderAll(); });
   main.addEventListener("dblclick", () => {
@@ -446,7 +465,11 @@ function threadRow(t: Thread, p: Preset): HTMLLIElement {
     input.addEventListener("blur", () => end(true));
   });
   li.querySelector("select")!.addEventListener("change", (e) => api("/api/assign", { thread: t.id, preset: (e.target as HTMLSelectElement).value }).catch((err) => toast(err.message)));
-  if (t.next) li.appendChild(handoffCard(t, t.next));
+  const done = (line: string, preset: string) => copy(line).then(() => toast(`Start line copied. Paste it into a new thread to start on ${preset}.`));
+  li.querySelector<HTMLButtonElement>(".ibtn.new")?.addEventListener("click", () => {
+    if (h?.preset && h.line) done(h.line, h.preset.name);
+    else api("/api/presets/fromThread", { thread: t.id }).then((r) => done(r.line, r.preset.name)).catch((e) => toast(e.message));
+  });
   return li;
 }
 
@@ -462,46 +485,28 @@ async function copy(text: string) {
   }
 }
 
-/** Past the amber warning: start a new thread on the saved preset that best covers this one, by fixed rules. */
-function handoffCard(t: Thread, h: Handoff): HTMLDivElement {
-  const box = document.createElement("div");
-  box.className = "handoff";
-  const counts = `${h.read} file${h.read === 1 ? "" : "s"} read, ${h.edited} edited${h.folders.length ? ` in ${h.folders.join(", ")}` : ""}`;
-  const done = (line: string, name: string) => copy(line).then(() => toast(`Start line copied. Paste it as the first message of a new thread to run it on "${name}".`));
-  if (h.preset && h.line) {
-    box.innerHTML = `<p>Start a new thread on <b>${esc(h.preset.name)}</b>: it holds ${Math.round(h.preset.share * 100)}% of what this thread used, ~${fmt(h.preset.tokens)} tokens.</p>`
-      + `<code title="${esc(h.line)}">${esc(counts)}</code><button class="btn fill">Copy start line</button>`;
-    box.querySelector("button")!.onclick = () => done(h.line!, h.preset!.name);
-  } else if (h.save) {
-    box.innerHTML = `<p>No saved preset fits this thread under ${fmt(S!.map.settings.heavyAt)}. Save its ${h.save.files} warm file${h.save.files === 1 ? "" : "s"} as <b>${esc(h.save.name)}</b> and start there.</p>`
-      + `<code>${esc(counts)}</code><button class="btn fill">Save and copy start line</button>`;
-    box.querySelector("button")!.onclick = () => api("/api/presets/fromThread", { thread: t.id }).then((r) => done(r.line, r.preset.name)).catch((e) => toast(e.message));
-  } else box.innerHTML = `<p>Start a new thread for the next task.</p><code>${esc(counts)}</code>`;
-  return box;
-}
-
 function renderPresets() {
   if (!S) return;
   // A live update must not close a dropdown someone is using.
   if ((document.activeElement as HTMLElement | null)?.closest?.("#plist select, #plist .tname")) return;
   const box = $("plist");
   box.innerHTML = "";
-  // In use: a thread on it is working right now. In-use presets are pinned to the top and burn, then the default view, then the rest.
+  // In use: a thread on it is working right now. In-use presets are pinned to the top and pulse, then the default view, then the rest.
   const inUse = (p: Preset) => S!.threads.some((t) => t.preset === p.id && working(t.id));
   const ordered = [...S.map.presets].sort((a, b) => Number(inUse(b)) - Number(inUse(a)) || Number(isBase(b)) - Number(isBase(a)));
+  const recent = (t: Thread) => working(t.id) || Date.now() - t.lastSeen < RECENT;
   for (const p of ordered) {
     const base = isBase(p), li = document.createElement("li"), b = document.createElement("button");
     li.className = "preset" + (p.id === preset().id ? " cur" : "") + (inUse(p) ? " inuse" : "");
-    if (inUse(p)) li.insertAdjacentHTML("afterbegin", SKIN_HOT + EMBERS);
     b.className = "pick";
     b.setAttribute("aria-pressed", String(p.id === preset().id));
     const feats = p.features.map((f) => byId.get(f)?.label ?? f);
-    const sub = base ? "Every file attached. Threads without a preset use this." : feats.slice(0, 4).join(" · ") + (feats.length > 4 ? ` · +${feats.length - 4}` : "");
-    const sleeping = p.asleep?.length ? ` · ${p.asleep.length} asleep` : "";
-    b.innerHTML = `<span class="dot" style="background:${esc(p.color)}"></span><span class="pmain"><b>${esc(p.name)}${base ? '<span class="def">Default view</span>' : ""}</b><small>${esc(sub + sleeping)}</small></span><em>~${fmt(tokOf(p))}</em>`;
+    b.title = base ? "Every file attached. Threads without a preset use this." : `Features: ${feats.join(", ")}${p.asleep?.length ? `. ${p.asleep.length} asleep.` : ""}`;
+    b.innerHTML = `<span class="dot" style="background:${esc(p.color)}"></span><b>${esc(p.name)}</b>${base ? '<span class="def">Default</span>' : ""}<em>${fmt(tokOf(p))}</em>`;
     b.onclick = () => { P = p.id; store.set("weave.preset", P); selected = null; editing = null; renderAll(); };
     li.appendChild(b);
-    const users = S.threads.filter((t) => t.preset === p.id).sort((x, y) => Number(working(y.id)) - Number(working(x.id)));
+    if (inUse(p)) li.insertAdjacentHTML("beforeend", FX_HOT);
+    const users = S.threads.filter((t) => t.preset === p.id && (showOld || recent(t))).sort((x, y) => Number(working(y.id)) - Number(working(x.id)) || y.lastSeen - x.lastSeen);
     if (users.length) {
       const ul = document.createElement("ul");
       ul.className = "tlist";
@@ -510,6 +515,14 @@ function renderPresets() {
       li.appendChild(ul);
     }
     box.appendChild(li);
+  }
+  const old = S.threads.filter((t) => !recent(t)).length;
+  if (old) {
+    const more = document.createElement("li");
+    more.className = "older";
+    more.innerHTML = `<button>${showOld ? "Hide" : "Show"} ${old} older thread${old === 1 ? "" : "s"}</button>`;
+    more.querySelector("button")!.onclick = () => { showOld = !showOld; renderPresets(); };
+    box.appendChild(more);
   }
   if (!S.threads.length) box.insertAdjacentHTML("beforeend", '<li class="empty">No threads yet. They appear here once Claude Code runs in this project with the WEAVE hooks.</li>');
   renderPresetActions();
@@ -683,6 +696,8 @@ function renderSettings() {
   $("warmCold").onclick = () => api("/api/settings", { warmCold: !st.warmCold }).catch((e) => toast(e.message));
   $("freeze").setAttribute("aria-checked", String(st.freeze));
   $("freeze").onclick = () => api("/api/settings", { freeze: !st.freeze }).catch((e) => toast(e.message));
+  $("autoCalibrate").setAttribute("aria-checked", String(st.autoCalibrate));
+  $("autoCalibrate").onclick = () => api("/api/settings", { autoCalibrate: !st.autoCalibrate }).catch((e) => toast(e.message));
   for (const k of ["heavyAt", "freshAt"] as const) {
     const input = $<HTMLInputElement>(k);
     // A live update must not overwrite a number being typed.

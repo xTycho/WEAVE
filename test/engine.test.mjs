@@ -9,7 +9,7 @@ import {
   windowNote, spinUp, handleHook, suggestions, recentEvents, heat, warmth, HALF_LIFE, saveKey,
   overdue, OVERDUE_DAYS, sleep, presetFromHeat, tagFor, threadName, readKey, removeKey, tokenMode, startDashboard,
   frozen, frozenLine, FREEZE_AFTER, FROZEN_CHARS, contextLevel, thresholds, normalizeMap, appendEvent, readThreads,
-  handoff, bestPreset, startPreset, createPreset, titleFrom,
+  handoff, bestPreset, startPreset, createPreset, titleFrom, calibrate, presetFromFiles,
 } from "../dist/index.js";
 import { createTools } from "../dist/mcp/tools.js";
 
@@ -434,5 +434,25 @@ test("a start line moves the new thread onto its preset, and title tools name th
   assert.equal(titleFrom("Read", { label: "x" }), undefined);
   handleHook({ hook_event_name: "PreToolUse", session_id: "t9", cwd: root, tool_name: "mcp__weave__weave_name_thread", tool_input: { name: "Header fixes" } });
   assert.equal(readThreads(store.paths).t9.name, "Header fixes");
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("auto-calibrate tells a thread once per warning, and auto presets replace themselves", () => {
+  const root = project();
+  const store = new ContextStore(root);
+  const now = Date.now();
+  const { map } = store.load();
+  const events = [{ t: now, s: "t1", ph: "end", verb: "Edit", node: "src/ui/App.tsx", tool: "Edit" }];
+  const save = () => { throw new Error("a fitting preset needs no save"); };
+  const line = calibrate(map, events, "t1", 60_000, "heavy", undefined, save, now);
+  assert.match(line, /^WEAVE: 60k tokens, past amber \(50k\)\. Tell the user in one line to start a new thread with: Continue with WEAVE preset/);
+  assert.equal(calibrate(map, events, "t1", 70_000, "heavy", "heavy", save, now), undefined, "said once per level");
+  assert.ok(calibrate(map, events, "t1", 120_000, "full", "heavy", save, now).includes("past red (100k)"), "and again at red");
+  map.settings.autoCalibrate = false;
+  assert.equal(calibrate(map, events, "t1", 120_000, "full", undefined, save, now), undefined, "the switch turns it off");
+  const files = [findNode(map, "src/ui/App.tsx")];
+  const a = presetFromFiles(map, files, true), b = presetFromFiles(map, files, true);
+  assert.equal(a.id, b.id, "an auto save refreshes its own preset");
+  assert.notEqual(presetFromFiles(map, files).id, a.id, "a manual save always adds one");
   rmSync(root, { recursive: true, force: true });
 });

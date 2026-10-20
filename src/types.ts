@@ -41,6 +41,8 @@ export interface Preset {
    * a thread on this preset reads or edits them.
    */
   asleep?: string[];
+  /** Saved by auto-calibrate. A later auto save with the same name replaces it instead of adding another preset. */
+  auto?: boolean;
   /** Last attach or detach time per node, so old rule evidence does not re-fire. */
   changedAt: Record<string, number>;
 }
@@ -60,9 +62,11 @@ export interface Settings {
   warmCold: boolean;
   /** Tell each thread which files it has moved on from, per message. Per thread only; never written into presets. */
   freeze: boolean;
-  /** Context tokens from which a thread is told to run /compact. */
+  /** Past each warning, tell the thread once to suggest a new thread with a start line, saving a preset from its warm files when none fits. */
+  autoCalibrate: boolean;
+  /** Context tokens from which a thread turns amber. */
   heavyAt: number;
-  /** Context tokens from which a thread is told to start fresh. */
+  /** Context tokens from which a thread turns red. */
   freshAt: number;
   gate: Gate;
   idleAfter: number;
@@ -123,6 +127,8 @@ export interface ThreadInfo {
   prompts?: number[];
   /** Tokens in the thread's context window, read from its transcript. */
   contextTokens?: number;
+  /** The highest warning auto-calibrate has already told this thread about. */
+  warned?: "heavy" | "full";
 }
 
 export interface Suggestion {

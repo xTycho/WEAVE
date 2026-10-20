@@ -188,6 +188,7 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
       if (typeof b.autoApply === "boolean") m.settings.autoApply = b.autoApply;
       if (typeof b.warmCold === "boolean") m.settings.warmCold = b.warmCold;
       if (typeof b.freeze === "boolean") m.settings.freeze = b.freeze;
+      if (typeof b.autoCalibrate === "boolean") m.settings.autoCalibrate = b.autoCalibrate;
       if (typeof b.heavyAt === "number" || typeof b.freshAt === "number") Object.assign(m.settings, thresholds(b.heavyAt ?? m.settings.heavyAt, b.freshAt ?? m.settings.freshAt));
       if (b.gate === "flag" || b.gate === "block") m.settings.gate = b.gate;
       if (typeof b.idleAfter === "number") m.settings.idleAfter = Math.min(500, Math.max(3, Math.round(b.idleAfter)));

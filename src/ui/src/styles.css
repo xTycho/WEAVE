@@ -89,7 +89,7 @@ header::before { content: ""; position: absolute; inset: 0 0 auto; height: 3px; 
 .due-count[aria-pressed="true"] { background: #E59A54; color: #0A0B0D; }
 .due-count[hidden] { display: none; }
 
-.main { display: grid; grid-template-columns: 1fr 320px; min-height: 0; }
+.main { display: grid; grid-template-columns: 1fr clamp(320px, 26vw, 380px); min-height: 0; }
 @media (max-width: 860px) { .main { grid-template-columns: 1fr; grid-template-rows: 62vh auto; } .app { height: auto; } }
 
 /* Canvas */
@@ -157,22 +157,10 @@ header::before { content: ""; position: absolute; inset: 0 0 auto; height: 3px; 
 .node.cold { opacity: .68; }
 .legend i.warm { background: var(--p-peach); box-shadow: 0 0 8px var(--p-peach); }
 .legend i.cold { background: var(--line-2); }
-.legend i.hot { background: linear-gradient(115deg, #FFD9A8, #F4A07A, #F1A9B0); box-shadow: 0 0 8px #F6A35A; }
-/* Hot: embers rise off the node's top edge. Paused with the rest of the motion under html.still. */
+.legend i.hot { background: #F6A35A; box-shadow: 0 0 0 3px rgba(246,163,90,.3), 0 0 8px #F6A35A; }
+/* Hot: a warm border; the pulse and embers come from the fx layer. */
 .node.hot { border-color: #F6A35A; box-shadow: 0 0 0 1px #F6A35A, 0 0 22px -2px #F28B4B; }
 .node.hot.sel { box-shadow: 0 0 0 2px var(--fg), 0 0 22px -2px #F28B4B; }
-.embers { position: absolute; left: 0; right: 0; top: 0; height: 0; pointer-events: none; }
-.embers i { position: absolute; left: var(--x); bottom: 0; width: 4px; height: 4px; border-radius: 50%; opacity: 0;
-  background: radial-gradient(circle, #FFE3A3 0%, #F6A35A 55%, rgba(242,139,75,0) 100%); box-shadow: 0 0 6px 1px rgba(246,163,90,.8);
-  animation: ember var(--t) ease-out var(--d) infinite; }
-.embers i:nth-child(even) { width: 3px; height: 3px; }
-@keyframes ember {
-  0% { transform: translate(0, 0) scale(1); opacity: 0; }
-  15% { opacity: 1; }
-  60% { transform: translate(-5px, -26px) scale(.8); opacity: .85; }
-  100% { transform: translate(4px, -48px) scale(.3); opacity: 0; }
-}
-html.still .embers { display: none; }
 .world.dots .node.hot { box-shadow: 0 0 calc(18px * var(--inv, 1)) calc(-2px * var(--inv, 1)) #F28B4B; border-color: #F6A35A; }
 .node.cold:hover, .node.cold.sel, .node.cold.working { opacity: 1; }
 .node.feature { width: 196px; border-width: 1.5px; }
@@ -224,49 +212,48 @@ html.still .embers { display: none; }
 .world.searching .node.match { box-shadow: 0 0 0 2px var(--p-violet); opacity: 1; filter: none; }
 .world.searching .cord { opacity: .2; }
 /* Context panel: the default view, saved presets and the threads on each. */
-.plist { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; min-width: 0; }
-.plist > li { min-width: 0; border: 1px solid transparent; border-radius: 12px; position: relative; }
-/* In use: a thread on this preset is working now. Pinned to the top with coals and embers, like a hot node. */
-.plist > li.inuse { border-color: #F6A35A; box-shadow: 0 0 0 1px #F6A35A, 0 0 22px -6px #F28B4B; isolation: isolate; }
-.plist > li.inuse > .skin { z-index: -1; opacity: .3; }
-.plist > li.inuse > .embers { z-index: 1; }
-.plist > li.cur { background: var(--surface); border-color: var(--line-2); }
-.plist .pick { width: 100%; min-width: 0; display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: start; gap: 10px; padding: 10px; border: 0; border-radius: 12px; background: transparent; cursor: pointer; text-align: left; color: inherit; }
+.plist { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; min-width: 0; }
+.plist > li { min-width: 0; border-radius: 10px; position: relative; }
+.plist > li.cur { background: var(--surface); }
+/* In use: a thread on this preset is working now. Pinned to the top, with the hot pulse and embers. */
+.plist > li.inuse { box-shadow: inset 0 0 0 1px #F6A35A; }
+.plist .pick { width: 100%; min-width: 0; display: grid; grid-template-columns: 10px auto minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 8px 10px; border: 0; border-radius: 10px; background: transparent; cursor: pointer; text-align: left; color: inherit; }
 .plist > li:not(.cur) .pick:hover { background: var(--surface-2); }
-.plist .dot { width: 10px; height: 10px; border-radius: 3px; margin-top: 3px; }
-.plist .pmain { min-width: 0; display: grid; gap: 3px; }
-.plist .pmain b { font: 500 13.5px/1.2 var(--body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.plist small { color: var(--dim); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.plist em { font-style: normal; font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.tlist { list-style: none; margin: 0; padding: 0 8px 8px; display: grid; gap: 6px; min-width: 0; }
-/* A thread row: name on top, its status and preset below, then any warning and the new-thread suggestion across the full width. */
-.thread { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; grid-template-areas: "icon name name" ". stat pick" "warn warn warn" "hand hand hand";
-  align-items: center; column-gap: 8px; row-gap: 2px; min-width: 0; padding: 8px 10px; border-radius: 10px; background: var(--card); border: 1px solid var(--line); }
-.thread > .ticon { grid-area: icon; }
-.thread > .tmain, .thread > .tname { grid-area: name; }
-.thread > .tstat { grid-area: stat; color: var(--dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
-.thread > select { grid-area: pick; }
-.thread > .cwarn { grid-area: warn; margin: 6px 0 0; font-size: 12px; font-weight: 500; line-height: 1.35; display: flex; align-items: baseline; gap: 6px; }
-.thread > .handoff { grid-area: hand; }
-.tname { min-width: 0; height: 24px; border-radius: 6px; border: 1px solid var(--fg); background: var(--card); padding: 0 6px; color: var(--fg); font: 500 12.5px var(--body); }
+.plist .dot { width: 10px; height: 10px; border-radius: 3px; }
+.plist .pick b { font: 500 13.5px/1.2 var(--body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plist em { grid-column: 4; font-style: normal; font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tlist { list-style: none; margin: 0; padding: 0 4px 6px 20px; display: grid; gap: 0; min-width: 0; }
+/* A thread: orb, name, context bar, hand-off and move. Details live in tooltips. */
+.thread { display: grid; grid-template-columns: 16px minmax(0, 1fr) 48px auto auto; align-items: center; gap: 6px; min-width: 0; height: 30px; padding: 0 4px 0 6px; border-radius: 8px; }
+.thread:hover { background: var(--surface-2); }
 .thread.sel { box-shadow: inset 0 0 0 1.5px var(--frost); }
-/* Context warnings: amber from the first threshold, red from the second. */
-.thread.ctx-heavy { background: var(--amber-bg); box-shadow: inset 3px 0 0 var(--amber); }
-.thread.ctx-full { background: var(--red-bg); box-shadow: inset 3px 0 0 var(--red); }
-.thread.sel.ctx-heavy { box-shadow: inset 3px 0 0 var(--amber), inset 0 0 0 1.5px var(--frost); }
-.thread.sel.ctx-full { box-shadow: inset 3px 0 0 var(--red), inset 0 0 0 1.5px var(--frost); }
-.ctx-heavy .cwarn::before, .ctx-full .cwarn::before { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; transform: translateY(-1px); background: var(--amber); }
-.ctx-full .cwarn::before { background: var(--red); }
-.ticon { width: 20px; height: 20px; display: grid; place-items: center; }
-.ticon canvas { width: 20px; height: 20px; display: none; filter: contrast(1.6); }
-.ticon i { width: 8px; height: 8px; border-radius: 50%; background: var(--line-2); display: block; }
+.tname { min-width: 0; height: 24px; border-radius: 6px; border: 1px solid var(--fg); background: var(--card); padding: 0 6px; color: var(--fg); font: 500 12.5px var(--body); }
+.ticon { width: 16px; height: 16px; display: grid; place-items: center; }
+.ticon canvas { width: 18px; height: 18px; display: none; filter: contrast(1.3); }
+.ticon i { width: 7px; height: 7px; border-radius: 50%; background: var(--line-2); display: block; }
 .thread.live .ticon i { background: var(--c); animation: breathe 1.6s ease-in-out infinite; }
 .thread.busy .ticon canvas { display: block; }
 .thread.busy .ticon i { display: none; }
-.tmain { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; padding: 0; border: 0; background: none; text-align: left; cursor: pointer; color: inherit; line-height: 18px; overflow: hidden; overflow-wrap: anywhere; }
-.tmain:hover b { text-decoration: underline; text-decoration-color: var(--line-2); text-underline-offset: 2px; }
-.tmain b { font: 500 12.5px/18px var(--body); }
-.thread select { height: 24px; max-width: 120px; border-radius: 6px; border: 1px solid var(--line-2); background: var(--card); padding: 0 6px; color: var(--fg); font: 400 11.5px var(--body); }
+.tmain { min-width: 0; padding: 0; border: 0; background: none; text-align: left; cursor: pointer; color: inherit; font: 500 12.5px/30px var(--body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thread:not(.live):not(.busy) .tmain { color: var(--dim); font-weight: 400; }
+/* Context bar: fills toward the red limit; amber and red from the warning thresholds. */
+.tbar { position: relative; height: 16px; display: flex; align-items: center; gap: 4px; }
+.tbar i { flex: 1; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; position: relative; }
+.tbar i::after { content: ""; position: absolute; inset: 0 auto 0 0; width: calc(var(--fill, 0) * 100%); border-radius: inherit; background: var(--dim); }
+.ctx-heavy .tbar i::after { background: var(--amber); }
+.ctx-full .tbar i::after { background: var(--red); }
+.tbar small { min-width: 22px; text-align: right; font-size: 10.5px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.ctx-heavy .tbar small, .ctx-full .tbar small { color: var(--fg); font-weight: 500; }
+.ibtn { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 6px; border: 0; background: none; color: var(--dim); cursor: pointer; position: relative; padding: 0; }
+.ibtn:hover { background: var(--surface); color: var(--fg); }
+.ibtn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.ibtn.new { color: var(--fg); background: var(--amber-bg); box-shadow: inset 0 0 0 1px var(--amber); }
+.ctx-full .ibtn.new { background: var(--red-bg); box-shadow: inset 0 0 0 1px var(--red); }
+/* The native select sits invisibly over the chevron, so the menu is the system's own. */
+.ibtn.move select { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+.plist > li.older { padding: 2px 10px; }
+.older button { border: 0; background: none; padding: 4px 0; color: var(--dim); font: 400 12px var(--body); cursor: pointer; }
+.older button:hover { color: var(--fg); text-decoration: underline; }
 .plist > li.empty { padding: 4px 10px; border: 0; }
 .switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; }
 .switch > button { flex: none;  width: 44px; height: 24px; min-width: 0; padding: 0; border-radius: 6px; border: 1px solid var(--line-2); background: var(--surface); position: relative; cursor: pointer; }
@@ -401,40 +388,35 @@ button:disabled { opacity: .5; cursor: default; }
 .live .leaf small { color: var(--dim); font-size: 11px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .live .who { width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
 
-/* Textures inside a node, under its text: the node's transform makes it a stacking context, so z-index -1 stays above its background. */
-.skin { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; pointer-events: none; z-index: -1; }
-/* Hot and frozen fill the node with a foil like the core's, in hot or very cold pastels, drifting slowly. The particles sit on top. */
-.skin-hot, .skin-frost { background-size: 260% 260%; animation: foil 10s ease-in-out infinite; }
-.skin-hot { background-image: linear-gradient(115deg, #FFD9A8 0%, #F6BE8A 20%, #F4A07A 38%, #F1A9B0 55%, #FFC98F 72%, #F7B26E 88%, #FFD9A8 100%); }
+/* Particle layers: they sit on the node's edge and never catch the pointer. */
+.fx { position: absolute; inset: 0; pointer-events: none; border-radius: inherit; }
+.fx b { position: absolute; inset: 0; border-radius: inherit; }
+.fx i { position: absolute; width: 4px; height: 4px; margin: -2px 0 0 -2px; border-radius: 50%; opacity: 0; }
+/* Hot: a ring swells off the border, and embers fly outward from the edge. */
+.fx-hot b { animation: pulse 2.2s ease-out infinite; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(246,163,90,.55); } 100% { box-shadow: 0 0 0 12px rgba(246,163,90,0); } }
+.fx-hot i { left: var(--ex); top: var(--ey); background: radial-gradient(circle, #FFE3A3, #F6A35A 60%, #F28B4B); box-shadow: 0 0 6px 1px rgba(246,163,90,.7);
+  animation: fly 2.4s ease-out var(--d) infinite; }
+.fx-hot i:nth-of-type(3n) { background: radial-gradient(circle, #FFD0D4, #F1A9B0); box-shadow: 0 0 6px 1px rgba(241,169,176,.7); }
+@keyframes fly { 0% { transform: translate(0, 0) scale(1); opacity: 0; } 15% { opacity: 1; } 100% { transform: translate(var(--dx), var(--dy)) scale(.3); opacity: 0; } }
+/* Frozen: a ring closes in on the card, and specks drift from around it into its core. */
 .node.frozen { border-color: var(--frost); box-shadow: 0 0 14px -4px var(--frost); }
-.skin-frost { background-image: linear-gradient(115deg, #EEF8FF 0%, #CBE7F8 18%, #A9D3EF 36%, #D8EEFB 52%, #B7DCF4 70%, #E3F2FC 86%, #EEF8FF 100%); }
-/* Both fills are light, so the text on them stays dark in either theme, as on the core, and they never fade back like cold files. */
-.node.hot, .node.frozen { opacity: 1; }
-.node.hot, .node.frozen, .node.hot .cap, .node.frozen .cap, .node.hot .meta, .node.frozen .meta { color: #0A0B0D; }
-.node.hot .meta span, .node.frozen .meta span { color: rgba(10,11,13,.68); }
-.skin-frost i { position: absolute; left: var(--x); top: var(--y); width: 3px; height: 3px; border-radius: 50%; background: #fff; opacity: 0;
-  box-shadow: 0 0 4px rgba(255,255,255,.9); animation: speck var(--t) linear var(--d) infinite; }
-@keyframes speck {
-  0% { transform: translateY(-8px); opacity: 0; }
-  25%, 70% { opacity: .9; }
-  100% { transform: translateY(14px); opacity: 0; }
-}
-html.still .skin { animation: none; }
-html.still .skin-frost i { display: none; }
 .node.frozen.sel { box-shadow: 0 0 0 2px var(--fg), 0 0 14px -3px var(--frost); }
+.fx-frost b { animation: collapse 3s ease-in infinite; }
+@keyframes collapse { 0% { box-shadow: 0 0 0 12px rgba(143,195,230,0), inset 0 0 0 0 rgba(143,195,230,0); } 40% { box-shadow: 0 0 0 5px rgba(143,195,230,.35), inset 0 0 0 0 rgba(143,195,230,0); }
+  80%, 100% { box-shadow: 0 0 0 0 rgba(143,195,230,0), inset 0 0 18px 0 rgba(143,195,230,.28); } }
+.fx-frost i { background: radial-gradient(circle, #fff, #CBE7F8 60%, #8FC3E6); box-shadow: 0 0 5px 1px rgba(170,215,245,.8); animation: sink 3.2s ease-in var(--d) infinite; }
+@keyframes sink { 0% { left: var(--ox); top: var(--oy); opacity: 0; transform: scale(1); } 20% { opacity: 1; } 85% { opacity: .8; } 100% { left: 50%; top: 50%; opacity: 0; transform: scale(.2); } }
+html.still .fx { display: none; }
 .world.dots .node.frozen { border-color: var(--frost); box-shadow: 0 0 calc(14px * var(--inv, 1)) calc(-3px * var(--inv, 1)) var(--frost); }
-.world.dots .skin-frost i { display: none; }
+.world.dots .fx i { display: none; }
 .editing.frost { border-color: var(--frost); }
 .editing.frost > i { background: var(--frost); border-radius: 50%; }
-.legend i.frost { background: linear-gradient(115deg, #EEF8FF, #A9D3EF, #D8EEFB); box-shadow: 0 0 6px var(--frost); }
+.legend i.frost { background: var(--frost); box-shadow: inset 0 0 0 2px #fff, 0 0 6px var(--frost); }
 .heat.frozen { background: var(--frost-bg); color: var(--fg); box-shadow: inset 0 0 0 1px var(--frost); }
 /* Threshold inputs in the settings menu. */
 .nums { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12.5px; color: var(--dim); }
 .nums label { display: inline-flex; align-items: center; gap: 6px; }
 .nums input { width: 72px; height: 30px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--card); padding: 0 8px; color: var(--fg); font: 400 13px var(--body); font-variant-numeric: tabular-nums; }
 
-/* New-thread suggestion under a thread past its warning. */
-.handoff { margin-top: 8px; padding: 10px; border-radius: 8px; background: var(--surface); display: grid; gap: 8px; min-width: 0; }
-.handoff p { margin: 0; font-size: 12px; line-height: 1.4; }
-.handoff code { font: 400 11px/1.4 var(--body); color: var(--dim); overflow-wrap: anywhere; }
-.handoff .btn { justify-self: start; }
+

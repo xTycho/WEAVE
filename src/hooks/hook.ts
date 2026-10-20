@@ -1,8 +1,8 @@
-import { appendEvent, readThreads, recentEvents, writeThread } from "../engine/activity.js";
+import { appendEvent, readThreads, recentEvents, transcriptTokens, writeThread } from "../engine/activity.js";
 import { frozen, frozenLine, KEEP_PROMPTS } from "../engine/freeze.js";
-import { startPreset, withoutStart } from "../engine/handoff.js";
-import { warmth } from "../engine/heat.js";
-import { suggestions } from "../engine/rules.js";
+import { calibrate, startPreset, threadWarm, withoutStart } from "../engine/handoff.js";
+import { presetFromFiles, warmth } from "../engine/heat.js";
+import { contextLevel, suggestions } from "../engine/rules.js";
 import { attach, isLive, nodeForPath, presetFor, wake, windowNote } from "../engine/window.js";
 import { toRelative } from "../paths.js";
 import { ContextStore } from "../store.js";
@@ -107,8 +107,17 @@ export function handleHook(input: HookInput, root = input.cwd ?? process.cwd()):
     const moved = asked && map.presets.find((p) => p.id === asked);
     if (moved) store.update((m) => { m.assign[session] = moved.id; });
     const note = moved ? windowNote(map, moved, warmth(map, moved, recentEvents(store.paths)).warm) : undefined;
-    const line = map.settings.freeze ? frozenLine(frozen(map, recentEvents(store.paths), session, prompts).map((n) => n.paths[0] ?? n.id)) : undefined;
-    const context = [note, line].filter(Boolean).join("\n");
+    const events = recentEvents(store.paths);
+    const line = map.settings.freeze ? frozenLine(frozen(map, events, session, prompts).map((n) => n.paths[0] ?? n.id)) : undefined;
+    // Auto-calibrate: once per warning level, the thread is told to suggest a new thread on the best preset.
+    const tokens = transcriptTokens(input.transcript_path ?? prev?.transcript);
+    const level = contextLevel(tokens, map.settings).level;
+    const nudge = level === "ok" ? undefined : calibrate(map, events, session, tokens, level, prev?.warned,
+      () => store.update((m) => { const warm = threadWarm(m, events, session); return warm.length ? presetFromFiles(m, warm, true) : undefined; }).result);
+    if (nudge && level !== "ok") writeThread(store.paths, session, { warned: level });
+    // After a /compact the thread is back under amber, so the next crossing is told again.
+    if (level === "ok" && prev?.warned) writeThread(store.paths, session, { warned: undefined });
+    const context = [note, line, nudge].filter(Boolean).join("\n");
     return context ? json({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: context } }) : { exitCode: 0 };
   }
   if (event !== "PreToolUse" && event !== "PostToolUse") return { exitCode: 0 };

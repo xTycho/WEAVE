@@ -100,10 +100,14 @@ export function tagFor(map: ContextMap, files: WeaveNode[]): string {
  * Saves files as a preset: the features that hold them, with every other file
  * in those features detached. Named by `tagFor`.
  */
-export function presetFromFiles(map: ContextMap, files: WeaveNode[]): Preset {
+export function presetFromFiles(map: ContextMap, files: WeaveNode[], auto = false): Preset {
   const keep = new Set(files.map((n) => n.id));
   const features = [...new Set(files.map((n) => n.of[0]).filter((f): f is string => !!f))];
-  const preset = createPreset(map, tagFor(map, files), features);
+  const name = tagFor(map, files);
+  // An auto save refreshes its own earlier preset of the same name, so presets do not pile up.
+  const old = auto ? map.presets.find((p) => p.auto && p.name === name) : undefined;
+  const preset = old ? Object.assign(old, { features, detached: [], changedAt: {} }) : createPreset(map, name, features);
+  if (auto) preset.auto = true;
   preset.detached = map.nodes.filter((n) => n.tier === "element" && n.kind !== "tool" && !keep.has(n.id) && isLive(n, preset)).map((n) => n.id);
   return preset;
 }

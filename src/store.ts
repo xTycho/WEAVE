@@ -13,7 +13,7 @@ export interface LoadedMap {
 }
 
 const KINDS: Kind[] = ["core", "feature", "code", "design", "doc", "test", "tool"];
-const DEFAULT_SETTINGS: Settings = { autoApply: false, warmCold: true, freeze: true, heavyAt: 50_000, freshAt: 100_000, gate: "flag", idleAfter: 10, defaultPreset: "full" };
+const DEFAULT_SETTINGS: Settings = { autoApply: false, warmCold: true, freeze: true, autoCalibrate: true, heavyAt: 50_000, freshAt: 100_000, gate: "flag", idleAfter: 10, defaultPreset: "full" };
 
 /** Context thresholds stay between 10k and 2M tokens, and fresh is never below heavy. */
 export function thresholds(heavy: unknown, fresh: unknown): { heavyAt: number; freshAt: number } {
@@ -43,7 +43,7 @@ function preset(raw: unknown, i: number): Preset | undefined {
   const changed = obj(p.changedAt);
   return {
     id: p.id, name: str(p.name, p.id), color: str(p.color, PALETTE[i % PALETTE.length]),
-    features: strs(p.features), detached: strs(p.detached), asleep: strs(p.asleep),
+    features: strs(p.features), detached: strs(p.detached), asleep: strs(p.asleep), ...(p.auto === true ? { auto: true } : {}),
     changedAt: Object.fromEntries(Object.entries(changed).filter(([, v]) => typeof v === "number")) as Record<string, number>,
   };
 }
@@ -79,6 +79,7 @@ export function normalizeMap(raw: unknown): ContextMap {
       autoApply: s.autoApply === true,
       warmCold: s.warmCold !== false,
       freeze: s.freeze !== false,
+      autoCalibrate: s.autoCalibrate !== false,
       // Maps saved with the old 150k / 300k defaults move to the new ones; any other choice is kept.
       ...(s.heavyAt === 150_000 && s.freshAt === 300_000 ? thresholds(undefined, undefined) : thresholds(s.heavyAt, s.freshAt)),
       gate: s.gate === "block" ? "block" : "flag",

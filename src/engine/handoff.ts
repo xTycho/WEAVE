@@ -98,3 +98,25 @@ export function startPreset(prompt: string): string | undefined {
 export function withoutStart(prompt: string): string {
   return prompt.replace(START, " ");
 }
+
+const RANK = { ok: 0, heavy: 1, full: 2 } as const;
+
+/**
+ * Auto-calibrate: the one line a thread gets the first time it passes each
+ * warning, telling Claude to suggest a new thread with the start line. When no
+ * saved preset fits, `save` is called to make one from the thread's warm
+ * files. Undefined when there is nothing new to say.
+ */
+export function calibrate(
+  map: ContextMap, events: ActivityEvent[], session: string, tokens: number | undefined,
+  level: keyof typeof RANK, warned: "heavy" | "full" | undefined, save: () => Preset | undefined, now = Date.now(),
+): string | undefined {
+  if (!map.settings.autoCalibrate || !tokens || RANK[level] <= RANK[warned ?? "ok"]) return undefined;
+  const h = handoff(map, events, session, now);
+  if (!h) return undefined;
+  const preset = h.preset ?? (h.save ? save() : undefined);
+  if (!preset) return undefined;
+  const limit = level === "full" ? map.settings.freshAt : map.settings.heavyAt;
+  const k = (v: number) => `${Math.round(v / 1000)}k`;
+  return `WEAVE: ${k(tokens)} tokens, past ${level === "full" ? "red" : "amber"} (${k(limit)}). Tell the user in one line to start a new thread with: ${startLine(preset, h)}`;
+}
