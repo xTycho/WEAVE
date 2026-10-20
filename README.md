@@ -26,8 +26,9 @@ your-project                     ← 1 · Core: CLAUDE.md, README, package.json.
     └── invoice.ts
 ```
 
-- **Presets** are saved context windows: the features a thread loads, minus any files you detached. You can save as many as you like.
-- **Threads** are your Claude Code sessions. Each one runs on a preset, and several threads can share one. Pick a thread's preset in the map's Threads panel.
+- **Full project** is the default view: every file attached. Threads without a preset use it, and the map never detaches anything from it (sleeping overdue files is the one exception, and only when you click).
+- **Presets** are saved context windows: the features a thread loads, minus any files you detached. **Save warm files as preset** makes one from the files that are warm right now and names it by fixed rules: mostly UI or design files becomes "UI", mostly docs "Docs", mostly tests "Tests", otherwise the main folder. While a preset is selected, an **Editing** label on the map reminds you that clicking cords changes it.
+- **Threads** are your Claude Code sessions. Each one runs on a preset, and several threads can share one. In the **Context** panel on the right, every thread sits under its preset with an orb showing what it is doing; use its dropdown to move it to another preset.
 - **Cords** connect the layers. Click a cord, or use Detach in the node panel, to take something out of the window. Click it again to bring it back.
 
 ### What you see live
@@ -39,15 +40,18 @@ your-project                     ← 1 · Core: CLAUDE.md, README, package.json.
 | Runs a command | A pulse goes out to the tool (`npm run test`, Shell, Git) and the output comes back. |
 | Opens a PR | Every file the thread edited sends its change to the core, then one bundle goes to Git. |
 
-While Claude works on a node, a tag on it expands in the preset's colour, with a small animated orb, the action and the elapsed seconds. You can pick Calm, Pulse (the default) or Neural motion. Zoom out and the cards collapse into labelled boxes, like a graph view.
+While Claude works on a node, a tag on it expands in the preset's colour, with a small animated orb, the action and the elapsed seconds. The three most-used files give off embers. Zoom out and the cards collapse into labelled boxes, like a graph view.
 
 ### Suggestions are fixed rules, not AI
 
 - **Asked while detached:** Claude read or edited a file that is detached from its thread's window.
 - **Linked file:** a detached file tests, or is imported by, a file that was just edited.
-- **Unused:** an attached file nobody touched in the last 10 actions. Detaching it would save its tokens.
+- **Unused:** an attached file nobody touched in the last 10 actions. Only while warm and cold is off; with it on, such files are simply cold.
+- **Overdue:** attached files with no read or edit in 14 days. **Put to sleep** (per file, or all at once) detaches them and leaves them out of the thread note. A sleeping file wakes, reattached, the moment Claude reads or edits it, whatever the other settings say. Nothing is ever put to sleep without your click.
 
-The **Apply automatically** switch only ever reattaches. Detaching always waits for you. When Claude asks for a detached file you choose between **Allow and flag** (the default: it works, and the map marks it) and **Block** (Claude Code is told the file is detached and should ask you).
+Settings are in the gear menu in the top bar. **Reattach files Claude asks for** only ever reattaches; detaching always waits for you. The meter next to it is one bar for the whole project: warm, cold, overdue and detached, with the numbers on hover. Click the overdue count to highlight those files on the map.
+
+**Warm and cold context** (on by default) ranks attached files by how much threads use them. A file's heat is its reads plus twice its edits, halved every three days. The hottest files (up to 12) are warm: a new thread's note lists them under "Warm, start here", and the map gives them a glow. Every other attached file is cold: still attached and never blocked, but the note tells Claude to open it only when the task needs it, and the map fades it back. The top three warm files with a heat of 10 or more are hot and give off embers. It is plain arithmetic over the activity log, with no model involved, so the same activity always gives the same result. Nothing is detached and presets are never edited, so a cold file that gets used simply warms up again. Until something has been used, the note stays as it was. When Claude asks for a detached file you choose between **Allow and flag** (the default: it works, and the map marks it) and **Block** (Claude Code is told the file is detached and should ask you).
 
 ---
 
@@ -111,9 +115,9 @@ Restart Claude Desktop. The MCP server keeps a debounced watch on `.claude/conte
 
 **1. Let the scanner do the first pass.** Run `weave init` and open the map. Root files become the core. Each top-level folder becomes a feature, and so does each sub-folder of `src/`, `lib/`, `packages/` or `apps/`. Files become elements. Imports, including tsconfig `paths` aliases and workspace packages, mark which files are shared between features. Tests are linked to the code they import. Package scripts become tool nodes. Big features fold their sub-folders into one node each, so the map stays readable.
 
-**2. Make a preset per kind of task.** Select a preset, click **New**, and give it a name like "UI work". Then detach the features that task doesn't need by clicking their cords. The meter at the top shows how many tokens the window holds.
+**2. Make a preset per kind of task.** Work for a while, then click **Save warm files as preset**, or select a preset and click **Duplicate**. Then detach the features that task doesn't need by clicking their cords. The meter at the top shows how many tokens the window holds.
 
-**3. Point each thread at a preset.** Open the Threads panel and choose a preset for each thread. When a new thread starts, Claude Code receives a short note naming its window: core files, attached folders, and detached files to skip. The note costs about 100 to 200 tokens however big the project is, because it lists folders, not file contents.
+**3. Point each thread at a preset.** In the Context panel, use the dropdown next to each thread. When a new thread starts, Claude Code receives a short note naming its window: core files, attached folders, and detached files to skip. The note costs about 100 to 200 tokens however big the project is, because it lists folders, not file contents.
 
 **4. Let Claude adjust the window.** Claude can call these MCP tools, and each one returns paths and ids, never file contents:
 
@@ -125,7 +129,7 @@ Restart Claude Desktop. The MCP server keeps a debounced watch on `.claude/conte
 | `weave_create_preset` | Saves a new window, optionally as the default for new threads |
 | `weave_is_attached` | Checks whether one path is in the window |
 
-**5. Start a feature from a design.** Select a design node (CSS, SVG or theme tokens) and click **New feature from this**. If you pick a saved preset under **Bring a saved context window**, everything in that preset joins the new feature, so its context comes along.
+**5. Start a feature from a design.** Select a design node (CSS, SVG or theme tokens) and click **New feature from this**. If you pick a saved preset under **Bring a saved preset**, everything in that preset joins the new feature, so its context comes along.
 
 ### Structuring a project for fewer tokens
 
@@ -133,7 +137,7 @@ Restart Claude Desktop. The MCP server keeps a debounced watch on `.claude/conte
 - **One concern per folder.** WEAVE makes features from folders, so a clear folder layout gives you clean presets.
 - **Watch the shared nodes.** A file shared by many features is pulled into all of them. Splitting a big shared file often saves more than detaching a feature.
 - **Detach generated and vendored code** you never want Claude to read.
-- **Let the Unused rule help.** It points at the largest file nobody touched for a while.
+- **Put overdue files to sleep.** They cost nothing in the note and wake by themselves when needed.
 
 ### Where the savings come from
 
@@ -145,7 +149,7 @@ The note WEAVE adds to a thread is small, about 100 to 200 tokens. The saving co
 
 By default every count is an **estimate**: the file's size divided by 4. It runs fully offline.
 
-For **exact** counts, add an Anthropic API key, either in the map under **Token counting** or with `weave key set`, which hides what you type. You can also set `ANTHROPIC_API_KEY` in the environment. How the key is handled:
+For **exact** counts, add an Anthropic API key, either in the map under Settings, **Exact token counts** or with `weave key set`, which hides what you type. You can also set `ANTHROPIC_API_KEY` in the environment. How the key is handled:
 
 - It is stored in a private file in your user config folder: `~/.config/weave/` on Linux and macOS, `%APPDATA%\weave\` on Windows. The file is readable only by you. The key is never stored in the project, the map file or git.
 - The map can save or remove the key, but it can never read it back. Claude never sees it.

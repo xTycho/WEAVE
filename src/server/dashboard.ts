@@ -4,9 +4,10 @@ import { basename, dirname, extname, join, normalize, resolve, sep } from "node:
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 import { ActivityTail, readThreads, recentEvents, transcriptTokens } from "../engine/activity.js";
+import { heat, overdue, presetFromHeat, warmth } from "../engine/heat.js";
 import { suggestions } from "../engine/rules.js";
 import { countExact, removeKey, saveKey, tokenMode } from "../engine/tokens.js";
-import { attach, createPreset, deletePreset, detach, findNode, getPreset, spinUp, toggle, WeaveError } from "../engine/window.js";
+import { attach, createPreset, deletePreset, detach, findNode, getPreset, sleep, spinUp, toggle, WeaveError } from "../engine/window.js";
 import { listFiles } from "../scanner/files.js";
 import { ContextStore } from "../store.js";
 import type { ActivityEvent, ContextMap, Suggestion, ThreadInfo } from "../types.js";
@@ -77,6 +78,10 @@ export interface StatePayload {
   map: Omit<ContextMap, "links" | "overrides" | "custom" | "dismissed">;
   threads: (ThreadInfo & { preset: string })[];
   suggestions: Record<string, Suggestion[]>;
+  /** Preset id -> its warm files (hottest first), hot files and overdue files. Warm and hot are empty when warm and cold is off. */
+  warm: Record<string, { warm: string[]; hot: string[]; overdue: string[] }>;
+  /** Node id -> heat score, rounded. Only nodes that have been read or edited. */
+  heat: Record<string, number>;
   tokens: { mode: "exact" | "estimate"; source?: string; counting?: { done: number; total: number }; error?: string };
 }
 
@@ -109,6 +114,11 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
     return {
       type: "state", project: map.nodes.find((n) => n.tier === "core")?.label ?? basename(store.root), map: rest, threads,
       suggestions: Object.fromEntries(map.presets.map((p) => [p.id, suggestions(map, p, events).slice(0, 3)])),
+      warm: Object.fromEntries(map.presets.map((p) => {
+        const w = warmth(map, p, events);
+        return [p.id, { warm: w.warm.map((n) => n.id), hot: w.hot.map((n) => n.id), overdue: overdue(map, p, events).map((n) => n.id) }];
+      })),
+      heat: Object.fromEntries([...heat(events)].map(([id, v]) => [id, Math.round(v * 10) / 10])),
       tokens: { ...tokenMode(), ...(counting ? { counting } : {}), ...(countError ? { error: countError } : {}) },
     };
   };
@@ -139,13 +149,15 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
     "/api/attach": (b) => act(b, (m) => attach(m, s(b.preset), s(b.node) ?? "")),
     "/api/detach": (b) => act(b, (m) => detach(m, s(b.preset), s(b.node) ?? "")),
     "/api/presets/create": (b) => act(b, (m) => createPreset(m, s(b.name) ?? "New preset", undefined, s(b.copyFrom))),
+    "/api/sleep": (b) => act(b, (m) => sleep(m, s(b.preset), Array.isArray(b.nodes) ? b.nodes.filter((x): x is string => typeof x === "string") : [])),
+    "/api/presets/fromHeat": (b) => act(b, (m) => presetFromHeat(m, getPreset(m), events)),
     "/api/presets/delete": (b) => act(b, (m) => deletePreset(m, s(b.id) ?? "")),
     "/api/presets/rename": (b) => act(b, (m) => { getPreset(m, s(b.id)).name = (s(b.name) ?? "").trim().slice(0, 60) || getPreset(m, s(b.id)).name; }),
     "/api/presets/default": (b) => act(b, (m) => { m.settings.defaultPreset = getPreset(m, s(b.id)).id; }),
     "/api/assign": (b) => act(b, (m) => { const t = s(b.thread); if (!t) throw new WeaveError("Missing thread."); m.assign[t] = getPreset(m, s(b.preset)).id; }),
     "/api/settings": (b) => act(b, (m) => {
       if (typeof b.autoApply === "boolean") m.settings.autoApply = b.autoApply;
-      if (b.gate === "flag" || b.gate === "block") m.settings.gate = b.gate;
+      if (typeof b.warmCold === "boolean") m.settings.warmCold = b.warmCold;      if (b.gate === "flag" || b.gate === "block") m.settings.gate = b.gate;
       if (typeof b.idleAfter === "number") m.settings.idleAfter = Math.min(500, Math.max(3, Math.round(b.idleAfter)));
     }),
     "/api/spin": (b) => act(b, (m) => spinUp(m, s(b.preset), s(b.design) ?? "", s(b.name) ?? "", s(b.bring) || undefined)),

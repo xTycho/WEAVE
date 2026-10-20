@@ -13,7 +13,7 @@ export interface LoadedMap {
 }
 
 const KINDS: Kind[] = ["core", "feature", "code", "design", "doc", "test", "tool"];
-const DEFAULT_SETTINGS: Settings = { autoApply: false, gate: "flag", idleAfter: 10, defaultPreset: "full" };
+const DEFAULT_SETTINGS: Settings = { autoApply: false, warmCold: true, gate: "flag", idleAfter: 10, defaultPreset: "full" };
 
 const str = (v: unknown, d = "") => (typeof v === "string" ? v : d);
 const strs = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
@@ -36,7 +36,7 @@ function preset(raw: unknown, i: number): Preset | undefined {
   const changed = obj(p.changedAt);
   return {
     id: p.id, name: str(p.name, p.id), color: str(p.color, PALETTE[i % PALETTE.length]),
-    features: strs(p.features), detached: strs(p.detached),
+    features: strs(p.features), detached: strs(p.detached), asleep: strs(p.asleep),
     changedAt: Object.fromEntries(Object.entries(changed).filter(([, v]) => typeof v === "number")) as Record<string, number>,
   };
 }
@@ -70,6 +70,7 @@ export function normalizeMap(raw: unknown): ContextMap {
     dismissed: strs(m.dismissed),
     settings: {
       autoApply: s.autoApply === true,
+      warmCold: s.warmCold !== false,
       gate: s.gate === "block" ? "block" : "flag",
       idleAfter: Math.min(500, Math.max(3, Number(s.idleAfter) || DEFAULT_SETTINGS.idleAfter)),
       defaultPreset: str(s.defaultPreset, presets[0]?.id ?? DEFAULT_SETTINGS.defaultPreset),

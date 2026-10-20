@@ -8,6 +8,7 @@ import { isLive, nodeIndex } from "./window.js";
  *  - Asked while detached: a thread read or edited a node that is detached.
  *  - Linked file: a node that tests or is imported by an edited node is detached.
  *  - Unused: an attached node nobody touched in the last `idleAfter` actions.
+ *    Only while warm and cold is off; with it on, such files are simply cold.
  */
 export function suggestions(map: ContextMap, preset: Preset, events: ActivityEvent[]): Suggestion[] {
   const nodes = nodeIndex(map);
@@ -40,7 +41,8 @@ export function suggestions(map: ContextMap, preset: Preset, events: ActivityEve
   }
 
   const actions = mine.filter((e) => !e.blocked);
-  if (actions.length >= map.settings.idleAfter) {
+  // With warm and cold on, rarely used files are already cold: they cost nothing until opened, so there is nothing to detach.
+  if (!map.settings.warmCold && actions.length >= map.settings.idleAfter) {
     const recent = new Set(actions.slice(-map.settings.idleAfter).map((e) => e.node));
     const firstSeen = actions[actions.length - map.settings.idleAfter].t;
     const idle = map.nodes

@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   ContextStore, scanProject, listenWithFallback, attach, detach, isLive, getPreset, findNode, nodeForPath,
-  windowNote, spinUp, handleHook, suggestions, recentEvents, saveKey, readKey, removeKey, tokenMode, startDashboard,
+  windowNote, spinUp, handleHook, suggestions, recentEvents, heat, warmth, HALF_LIFE, saveKey,
+  overdue, OVERDUE_DAYS, sleep, presetFromHeat, tagFor, threadName, readKey, removeKey, tokenMode, startDashboard,
 } from "../dist/index.js";
 import { createTools } from "../dist/mcp/tools.js";
 
@@ -140,6 +141,105 @@ test("auto-apply only reattaches", () => {
   handleHook({ ...read, hook_event_name: "PostToolUse" }, root);
   const { map } = store.load();
   assert.ok(isLive(findNode(map, "src/lib/format.ts"), getPreset(map)));
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("heat counts reads and edits and fades with time", () => {
+  const now = Date.now();
+  const ev = (verb, node, ago, extra = {}) => ({ t: now - ago, s: "t1", ph: "end", verb, node, tool: "x", ...extra });
+  const h = heat([
+    ev("Read", "a", 0), ev("Edit", "a", 0), ev("Read", "b", HALF_LIFE), ev("Run", "c", 0),
+    ev("Read", "d", 0, { blocked: true }), { ...ev("Read", "e", 0), ph: "start" },
+  ], now);
+  assert.equal(h.get("a"), 3, "an edit counts twice");
+  assert.equal(h.get("b"), 0.5, "halved after one half-life");
+  assert.equal(h.has("c") || h.has("d") || h.has("e"), false, "runs, blocked calls and unfinished calls do not count");
+});
+
+test("warm and cold steer threads without detaching anything", () => {
+  const root = project();
+  const store = new ContextStore(root);
+  store.save(store.load().map);
+  const read = (f) => {
+    const input = { session_id: "t1", tool_name: "Read", tool_input: { file_path: join(root, f) } };
+    handleHook({ ...input, hook_event_name: "PreToolUse" }, root);
+    handleHook({ ...input, hook_event_name: "PostToolUse" }, root);
+  };
+  const note = () => JSON.parse(handleHook({ hook_event_name: "SessionStart", session_id: "t2" }, root).stdout).hookSpecificOutput.additionalContext;
+  assert.ok(!note().includes("Warm"), "no usage yet, so the note stays as before");
+
+  read("src/lib/format.ts");
+  read("src/lib/format.ts");
+  read("src/ui/theme.css");
+  const { map } = store.load();
+  const preset = getPreset(map);
+  const before = JSON.stringify(preset);
+  const w = warmth(map, preset, recentEvents(store.paths));
+  assert.deepEqual(w.warm.map((n) => n.id), ["src/lib/format.ts", "src/ui/theme.css"], "hottest first");
+  assert.ok(w.cold.some((n) => n.id === "src/ui/App.tsx"));
+  assert.deepEqual(w.hot, [], "two reads is warm, not hot");
+  assert.ok(w.cold.every((n) => isLive(n, preset)), "cold files stay attached");
+  assert.match(note(), /Warm, start here: src\/lib\/format\.ts, src\/ui\/theme\.css/);
+  assert.match(note(), /Cold, open only when the task needs them/);
+  assert.equal(JSON.stringify(getPreset(store.load().map)), before, "the preset is never edited");
+
+  store.update((m) => { m.settings.idleAfter = 3; });
+  for (let i = 0; i < 3; i++) read("src/api/server.ts");
+  const unused = (m) => suggestions(m, getPreset(m), recentEvents(store.paths)).filter((s) => s.rule === "Unused");
+  assert.equal(unused(store.load().map).length, 0, "with warm and cold on, rarely used files are cold, not detach suggestions");
+  assert.equal(unused({ ...store.load().map, settings: { ...store.load().map.settings, warmCold: false } }).length, 1, "the Unused rule is back when it is off");
+
+  for (let i = 0; i < 9; i++) read("src/lib/format.ts");
+  assert.deepEqual(warmth(store.load().map, preset, recentEvents(store.paths)).hot.map((n) => n.id), ["src/lib/format.ts"], "a run of recent reads makes it hot");
+
+  store.update((m) => { m.settings.warmCold = false; });
+  assert.ok(!note().includes("Warm"), "the switch turns it off");
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("thread names drop wrapper blocks and tags", () => {
+  assert.equal(threadName('<relay from="x"><note>do the thing</note></relay> Fix the header'), "Fix the header");
+  assert.equal(threadName("<wake reason=\"mention\">hi</wake>"), "");
+  assert.equal(threadName("Make the <b>map</b> faster"), "Make the map faster");
+  assert.equal(threadName('Hello <relay from="coordinator" session="s'), "Hello", "an unclosed wrapper is dropped too");
+});
+
+test("a preset saved from heat keeps the warm files and is named by fixed rules", () => {
+  const root = project();
+  const store = new ContextStore(root);
+  const now = Date.now();
+  const ev = (node, verb = "Read") => ({ t: now, s: "t1", ph: "end", verb, node, tool: "x" });
+  const { map } = store.load();
+  assert.throws(() => presetFromHeat(map, getPreset(map), [], now), /Nothing is warm yet/);
+  const p = presetFromHeat(map, getPreset(map), [ev("src/ui/App.tsx"), ev("src/ui/theme.css", "Edit")], now);
+  assert.equal(p.name, "UI", "mostly UI files");
+  assert.ok(isLive(findNode(map, "src/ui/App.tsx"), p) && isLive(findNode(map, "src/ui/theme.css"), p));
+  assert.ok(!isLive(findNode(map, "src/api/server.ts"), p), "other features stay out");
+  assert.equal(tagFor(map, [findNode(map, "docs/guide.md")]), "Docs");
+  assert.equal(tagFor(map, [findNode(map, "test/format.test.ts")]), "Tests");
+  assert.equal(tagFor(map, [findNode(map, "src/api/server.ts")]), "Api", "otherwise the main feature folder");
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("overdue files can be put to sleep and wake when Claude uses them", () => {
+  const root = project();
+  const store = new ContextStore(root);
+  store.save(store.load().map);
+  const now = Date.now(), old = now - (OVERDUE_DAYS + 1) * 864e5;
+  const ev = (node, t) => ({ t, s: "t1", ph: "end", verb: "Read", node, tool: "x" });
+  const { map } = store.load();
+  assert.deepEqual(overdue(map, getPreset(map), [ev("src/ui/App.tsx", now)], now), [], "a log shorter than 14 days flags nothing");
+  const due = overdue(map, getPreset(map), [ev("src/ui/App.tsx", old), ev("src/lib/format.ts", now)], now).map((n) => n.id);
+  assert.ok(due.includes("src/ui/App.tsx") && !due.includes("src/lib/format.ts"));
+
+  store.update((m) => { sleep(m, undefined, ["src/ui/App.tsx"]); m.settings.gate = "block"; });
+  const slept = store.load().map;
+  assert.ok(!isLive(findNode(slept, "src/ui/App.tsx"), getPreset(slept)));
+  assert.ok(!windowNote(slept, getPreset(slept)).includes("App.tsx"), "asleep files are left out of the thread note");
+  const input = { session_id: "t1", tool_name: "Read", tool_input: { file_path: join(root, "src/ui/App.tsx") } };
+  const pre = handleHook({ ...input, hook_event_name: "PreToolUse" }, root);
+  assert.ok(!pre.stdout, "a sleeping file is never blocked, even in Block mode");
+  assert.ok(isLive(findNode(store.load().map, "src/ui/App.tsx"), getPreset(store.load().map)), "and it wakes the moment Claude reads it");
   rmSync(root, { recursive: true, force: true });
 });
 

@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { recentEvents } from "../engine/activity.js";
+import { warmth } from "../engine/heat.js";
 import { attach, createPreset, detach, getPreset, isLive, summarize, WeaveError } from "../engine/window.js";
 import { ContextStore } from "../store.js";
 
@@ -31,15 +33,17 @@ export function createTools(store: ContextStore) {
   const context = (presetId?: string) => {
     const { map } = store.load();
     const w = summarize(map, getPreset(map, presetId));
+    const hot = warmth(map, w.preset, recentEvents(store.paths));
     return {
       preset: w.preset.id, tokens: w.tokens, core: w.core,
       attached: w.attached.map((f) => ({ id: f.id, paths: f.paths })),
+      ...(hot.warm.length ? { warm: hot.warm.flatMap((n) => n.paths), warmTokens: hot.warmTokens } : {}),
       detached: w.detached.flatMap((n) => n.paths),
     };
   };
   return {
     weave_get_context: {
-      description: "Show a context window: the core files, the attached feature folders and the detached files to skip. Paths only.",
+      description: "Show a context window: the core files, the attached feature folders, the warm files to start with and the detached files to skip. Paths only.",
       inputSchema: { preset: presetArg },
       handler: guarded(({ preset }: { preset?: string }) => ({ ok: true, ...context(preset) })),
     },

@@ -1,5 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { recentEvents } from "../engine/activity.js";
+import { warmth } from "../engine/heat.js";
 import { summarize, getPreset, windowNote } from "../engine/window.js";
 import { ContextStore } from "../store.js";
 import { watchFiles } from "../watch.js";
@@ -15,7 +17,8 @@ export function createMcpServer(store: ContextStore): McpServer {
   }
   server.registerResource("context", CONTEXT_URI, { description: "The default context window as a short note", mimeType: "text/plain" }, () => {
     const { map } = store.load();
-    return { contents: [{ uri: CONTEXT_URI, text: windowNote(map, getPreset(map)) }] };
+    const preset = getPreset(map);
+    return { contents: [{ uri: CONTEXT_URI, text: windowNote(map, preset, warmth(map, preset, recentEvents(store.paths)).warm) }] };
   });
   return server;
 }

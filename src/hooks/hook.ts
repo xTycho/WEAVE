@@ -1,6 +1,7 @@
 import { appendEvent, readThreads, recentEvents, writeThread } from "../engine/activity.js";
+import { warmth } from "../engine/heat.js";
 import { suggestions } from "../engine/rules.js";
-import { attach, isLive, nodeForPath, presetFor, windowNote } from "../engine/window.js";
+import { attach, isLive, nodeForPath, presetFor, wake, windowNote } from "../engine/window.js";
 import { toRelative } from "../paths.js";
 import { ContextStore } from "../store.js";
 import type { ActivityEvent, ContextMap, Verb, WeaveNode } from "../types.js";
@@ -63,6 +64,15 @@ export interface HookOutput {
 
 const json = (v: unknown): HookOutput => ({ stdout: JSON.stringify(v), exitCode: 0 });
 
+/** Wrappers that tools and other sessions put around a prompt. They say nothing about the thread. */
+const WRAPPERS = /<(system-reminder|relay|wake|note|command-[\w-]+|local-command-[\w-]+)\b[^>]*>[\s\S]*?<\/\1>/gi;
+const UNCLOSED = /<(system-reminder|relay|wake|note|command-[\w-]+|local-command-[\w-]+)\b[\s\S]*$/i;
+
+/** A short thread name from its first prompt: wrapper blocks and tags removed. Empty when nothing readable is left. */
+export function threadName(prompt: string): string {
+  return prompt.replace(WRAPPERS, " ").replace(UNCLOSED, " ").replace(/<\/?[a-z][\w-]*\b[^>]*>?/gi, " ").replace(/\s+/g, " ").trim().slice(0, 48);
+}
+
 export function handleHook(input: HookInput, root = input.cwd ?? process.cwd()): HookOutput {
   const store = new ContextStore(root);
   const { map } = store.load(false);
@@ -73,10 +83,10 @@ export function handleHook(input: HookInput, root = input.cwd ?? process.cwd()):
 
   if (event === "SessionStart") {
     writeThread(store.paths, session, { transcript: input.transcript_path });
-    return json({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: windowNote(map, preset) } });
+    return json({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: windowNote(map, preset, warmth(map, preset, recentEvents(store.paths)).warm) } });
   }
   if (event === "UserPromptSubmit") {
-    const name = (input.prompt ?? "").replace(/\s+/g, " ").trim().slice(0, 48);
+    const name = threadName(input.prompt ?? "");
     const named = readThreads(store.paths)[session]?.named;
     writeThread(store.paths, session, { transcript: input.transcript_path, ...(name && !named ? { name, named: true } : {}) });
     return { exitCode: 0 };
@@ -85,7 +95,12 @@ export function handleHook(input: HookInput, root = input.cwd ?? process.cwd()):
 
   const hit = classify(map, store.root, input.tool_name ?? "", input.tool_input);
   if (!hit) return { exitCode: 0 };
-  const outside = !isLive(hit.node, preset);
+  let outside = !isLive(hit.node, preset);
+  // An asleep file wakes the moment Claude reads or edits it, whatever the other settings say.
+  if (outside && preset.asleep?.includes(hit.node.id)) {
+    store.update((m) => { wake(m, preset.id, hit.node.id); });
+    outside = false;
+  }
   const base: ActivityEvent = { t: Date.now(), s: session, ph: event === "PreToolUse" ? "start" : "end", verb: hit.verb, node: hit.node.id, tool: input.tool_name ?? "", id: input.tool_use_id, ...(hit.path ? { path: hit.path } : {}), ...(outside ? { outside: true } : {}) };
 
   if (event === "PreToolUse" && outside && map.settings.gate === "block" && hit.node.kind !== "tool") {

@@ -6,8 +6,8 @@
   <title>WEAVE Network Map</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='11' y='11' width='10' height='10' rx='3' fill='%23C3A5DD'/%3E%3Crect x='3' y='3' width='26' height='26' rx='8' fill='none' stroke='%23A3A9E6' stroke-width='2.5'/%3E%3C/svg%3E">
   <script>try { document.documentElement.dataset.theme = localStorage.getItem('weave.theme') || 'light'; } catch {}</script>
-  <script type="module" crossorigin src="./assets/index-6JsV7FJ9.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-Dfz_GY56.css">
+  <script type="module" crossorigin src="./assets/index-DmjtQAGV.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-CcIR6sUX.css">
 </head>
 <body>
 <div class="app">
@@ -15,72 +15,73 @@
     <span class="mark">WEAVE</span>
     <span class="project" id="project"></span>
     <div class="search"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5"/><path d="M11 11l3.5 3.5"/></svg><input id="q" type="search" placeholder="Search files, features and tools" autocomplete="off" aria-label="Search the map"><ul class="results" id="results" role="listbox" hidden></ul></div>
-    <div class="meter" title="Tokens in the selected preset's context window">
-      <span class="cap" id="tokmode">Context</span><div class="bar"><div class="fill" id="fill"></div></div><b id="tok">0</b>
+    <button class="slider" id="theme" role="switch" aria-checked="false" aria-label="Dark or light theme"><span class="lbl l-dark">DARK</span><span class="lbl l-light">LIGHT</span><span class="knob"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M7.5 3 4.5 6l3 3"/></svg></span></button>
+    <div class="menu">
+      <button class="gear" id="gear" aria-haspopup="true" aria-expanded="false" aria-controls="settings" aria-label="Settings"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.25"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/></svg></button>
+      <div class="dropdown" id="settings" role="dialog" aria-label="Settings" hidden>
+        <div class="switch"><span><b class="lead">Reattach files Claude asks for</b><br><span class="note">Detaching always waits for you.</span></span><button id="auto" role="switch" aria-checked="false" aria-label="Reattach files Claude asks for"></button></div>
+        <div class="switch"><span><b class="lead">Warm and cold context</b><br><span class="note">Fixed rules, no AI: reads and edits, halved every three days. Threads start with the warm files; cold files stay attached and are opened only when needed.</span></span><button id="warmCold" role="switch" aria-checked="true" aria-label="Warm and cold context"></button></div>
+        <div class="stack"><span class="cap">When Claude asks for a detached file</span><div class="seg" id="gate"><button class="tab" data-v="flag" aria-pressed="true">Allow and flag</button><button class="tab" data-v="block" aria-pressed="false">Block</button></div></div>
+        <div class="switch"><span><b class="lead">Follow system motion</b><br><span class="note" id="animNote">Pause signals and embers when your device asks apps to reduce motion.</span></span><button id="anim" role="switch" aria-checked="false" aria-label="Follow system motion"></button></div>
+        <details class="more">
+          <summary><b class="lead">Exact token counts</b><span class="note" id="tokNote"></span></summary>
+          <form class="keyrow" id="keyForm" autocomplete="off">
+            <input id="key" type="password" placeholder="Anthropic API key (optional)" aria-label="Anthropic API key" spellcheck="false" autocomplete="off">
+            <button class="btn fill" type="submit">Save</button>
+          </form>
+          <button class="btn" id="keyRemove" hidden>Remove key</button>
+          <p class="note">With a key, each file's text is sent to Anthropic's free token-counting service and counted once until it changes. The key is stored in a private file in your user folder, never in the project, and this page cannot read it back. Without a key everything stays on this computer.</p>
+        </details>
+        <details class="more">
+          <summary><b class="lead">Legend</b></summary>
+          <div class="legend">
+            <span><i style="background:var(--p-blue)"></i>Read · flows in</span>
+            <span><i style="background:var(--p-pink)"></i>Edit · flows out</span>
+            <span><i style="background:var(--p-peach)"></i>Run · out and back</span>
+            <span><i style="background:var(--p-lime)"></i>PR · edits gather</span>
+            <span><i style="background:var(--cord-live)"></i>Attached</span>
+            <span><i class="dash"></i>Detached</span>
+            <span><i class="warm"></i>Warm · used often</span>
+            <span><i class="cold"></i>Cold · used rarely</span>
+            <span><i class="hot"></i>Embers · used the most</span>
+            <span><i class="due"></i>Overdue · unused 14 days</span>
+            <span><i class="sleep"></i>Asleep · wakes when used</span>
+          </div>
+        </details>
+      </div>
     </div>
-    <span class="conn" id="conn" title="Connection to the local WEAVE server">Connecting</span>
+    <div class="meter" id="meter">
+      <span class="mlabel"><b id="mview">Full project</b><span id="tok"></span></span>
+      <div class="bar" id="mbar"><i class="seg warm" id="sWarm"></i><i class="seg cold" id="sCold"></i><i class="seg due" id="sDue"></i><i class="seg det" id="sDet"></i></div>
+    </div>
+    <button class="due-count" id="dueBtn" aria-pressed="false" hidden></button>
+    <span class="conn" id="conn" role="status" aria-label="Connecting" title="Connecting to the local WEAVE server"></span>
   </header>
   <div class="main">
     <div class="stage" id="stage">
       <div class="world" id="world">
         <svg id="svg"><g id="hulls"></g><g id="cords"></g><g id="pulses"></g></svg>
       </div>
-      <section class="presets" id="presets" aria-label="Context presets">
-        <div class="bar"><span class="cap">Context presets</span><button class="min" id="pmin" aria-expanded="true" aria-label="Minimise presets"></button></div>
-        <div class="body">
-          <input id="pq" type="search" placeholder="Search presets or threads" aria-label="Search presets or threads">
-          <ul class="plist" id="plist"></ul>
-          <div class="prow" id="pactions"></div>
-        </div>
-      </section>
+      <div class="editing" id="editing" hidden></div>
+      <div class="toast" id="toast" role="status" hidden></div>
       <div class="hint">Scroll to zoom · drag to pan or move nodes · click a cord to detach or reattach</div>
       <div class="zoom"><button id="zin" aria-label="Zoom in">+</button><button id="zout" aria-label="Zoom out">−</button><button id="zfit">Fit</button></div>
     </div>
     <aside>
-      <section class="panel">
-        <div class="switch"><span><b class="lead">Apply suggestions automatically</b><br><span class="note">Only reattaching is automatic. Detaching always waits for you.</span></span><button id="auto" role="switch" aria-checked="false" aria-label="Apply suggestions automatically"></button></div>
-        <div class="stack"><span class="cap">When Claude asks for a detached file</span><div class="seg" id="gate"><button class="tab" data-v="flag" aria-pressed="true">Allow and flag</button><button class="tab" data-v="block" aria-pressed="false">Block</button></div></div>
+      <section class="panel" id="presets" aria-label="Context">
+        <h2 class="cap">Context</h2>
+        <ul class="plist" id="plist"></ul>
+        <div class="prow" id="pactions"></div>
       </section>
-      <section class="panel" id="suggestPanel"></section>
-      <section class="panel insp" id="insp"></section>
+      <section class="panel" id="suggestPanel" hidden></section>
+      <section class="panel insp" id="insp" hidden></section>
       <section class="panel">
-        <h2 class="cap">Threads</h2>
-        <ul class="threads-list" id="threads"></ul>
-      </section>
-      <section class="panel">
-        <h2 class="cap">Live activity</h2>
-        <ul class="feed" id="feed"></ul>
-      </section>
-      <section class="panel" id="tokens">
-        <h2 class="cap">Token counting</h2>
-        <p class="note" id="tokNote"></p>
-        <form class="keyrow" id="keyForm" autocomplete="off">
-          <input id="key" type="password" placeholder="Anthropic API key (optional)" aria-label="Anthropic API key" spellcheck="false" autocomplete="off">
-          <button class="btn fill" type="submit">Save</button>
-        </form>
-        <button class="btn" id="keyRemove" hidden>Remove key</button>
-        <p class="note">With a key, each file's text is sent to Anthropic's free token-counting service and counted once until it changes. The key is stored in a private file in your user folder, never in the project, and this page cannot read it back. Without a key everything stays on this computer.</p>
+        <h2 class="cap">Live</h2>
+        <div class="live" id="live" aria-live="polite"><p class="empty">Nothing running right now.</p></div>
       </section>
       <section class="panel">
-        <h2 class="cap">Motion</h2>
-        <div class="seg" id="motion"><button class="tab" data-v="calm" aria-pressed="false">Calm</button><button class="tab" data-v="pulse" aria-pressed="true">Pulse</button><button class="tab" data-v="neural" aria-pressed="false">Neural</button></div>
-        <p class="note" id="motionNote"></p>
-        <span class="cap">Animations</span>
-        <div class="seg" id="anim"><button class="tab" data-v="always" aria-pressed="true">Always on</button><button class="tab" data-v="system" aria-pressed="false">Follow system</button></div>
-        <p class="note" id="animNote" hidden>Your device asks apps to reduce motion, so the orbs and signals are paused.</p>
-        <span class="cap">Theme</span>
-        <div class="seg" id="theme"><button class="tab" data-v="light">Light</button><button class="tab" data-v="system">System</button><button class="tab" data-v="dark">Dark</button></div>
-      </section>
-      <section class="panel">
-        <h2 class="cap">Legend</h2>
-        <div class="legend">
-          <span><i style="background:var(--p-blue)"></i>Read · flows in</span>
-          <span><i style="background:var(--p-pink)"></i>Edit · flows out</span>
-          <span><i style="background:var(--p-peach)"></i>Run · out and back</span>
-          <span><i style="background:var(--p-lime)"></i>PR · edits gather</span>
-          <span><i style="background:var(--cord-live)"></i>Attached</span>
-          <span><i class="dash"></i>Detached</span>
-        </div>
+        <h2 class="cap">History</h2>
+        <ul class="feed" id="feed"><li class="empty">Nothing yet. Actions appear here as Claude works.</li></ul>
       </section>
     </aside>
   </div>

@@ -35,6 +35,12 @@ export interface Preset {
   color: string;
   features: string[];
   detached: string[];
+  /**
+   * Files the user put to sleep because they were overdue. Asleep files are
+   * detached and left out of the thread note, and wake (reattach) the moment
+   * a thread on this preset reads or edits them.
+   */
+  asleep?: string[];
   /** Last attach or detach time per node, so old rule evidence does not re-fire. */
   changedAt: Record<string, number>;
 }
@@ -50,6 +56,8 @@ export type Gate = "flag" | "block";
 
 export interface Settings {
   autoApply: boolean;
+  /** Rank attached files warm or cold by recent use and tell threads to start with the warm ones. */
+  warmCold: boolean;
   gate: Gate;
   idleAfter: number;
   defaultPreset: string;

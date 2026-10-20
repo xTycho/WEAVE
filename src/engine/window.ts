@@ -16,7 +16,7 @@ export function nodeIndex(map: ContextMap): Map<string, WeaveNode> {
 export function isLive(node: WeaveNode, preset: Preset): boolean {
   if (node.tier === "core") return true;
   if (node.tier === "feature") return preset.features.includes(node.id);
-  if (preset.detached.includes(node.id)) return false;
+  if (preset.detached.includes(node.id) || preset.asleep?.includes(node.id)) return false;
   return node.of.length === 0 || node.of.some((f) => preset.features.includes(f));
 }
 
@@ -71,6 +71,7 @@ export function attach(map: ContextMap, presetId: string | undefined, ref: strin
     if (!preset.features.includes(node.id)) { preset.features.push(node.id); touched.push(node.id); }
   } else {
     preset.detached = preset.detached.filter((d) => d !== node.id);
+    if (preset.asleep?.includes(node.id)) preset.asleep = preset.asleep.filter((d) => d !== node.id);
     if (node.of.length && !node.of.some((f) => preset.features.includes(f))) { preset.features.push(node.of[0]); touched.push(node.of[0]); }
     touched.push(node.id);
   }
@@ -86,6 +87,29 @@ export function detach(map: ContextMap, presetId: string | undefined, ref: strin
   else if (!preset.detached.includes(node.id)) preset.detached.push(node.id);
   touch(preset, node.id);
   return [node.id];
+}
+
+/** Puts attached files to sleep. Only ever called for a user's click; nothing sleeps a file on its own. */
+export function sleep(map: ContextMap, presetId: string | undefined, refs: string[]): string[] {
+  const preset = getPreset(map, presetId);
+  const done: string[] = [];
+  for (const ref of refs) {
+    const node = findNode(map, ref);
+    if (node.tier !== "element" || node.kind === "tool" || !isLive(node, preset)) continue;
+    (preset.asleep ??= []).push(node.id);
+    touch(preset, node.id);
+    done.push(node.id);
+  }
+  return done;
+}
+
+/** Wakes an asleep file. True when it was asleep. */
+export function wake(map: ContextMap, presetId: string | undefined, id: string): boolean {
+  const preset = getPreset(map, presetId);
+  if (!preset.asleep?.includes(id)) return false;
+  preset.asleep = preset.asleep.filter((d) => d !== id);
+  touch(preset, id);
+  return true;
 }
 
 export function toggle(map: ContextMap, presetId: string | undefined, ref: string): { attached: boolean; touched: string[] } {
@@ -104,7 +128,7 @@ export function createPreset(map: ContextMap, name: string, features?: string[],
   const preset: Preset = {
     id, name: name.trim() || id, color: PALETTE[map.presets.length % PALETTE.length],
     features: (features ?? base?.features ?? []).map((f) => (known.has(f) ? f : findNode(map, f).id)),
-    detached: [...(base?.detached ?? [])], changedAt: {},
+    detached: [...(base?.detached ?? [])], asleep: [...(base?.asleep ?? [])], changedAt: {},
   };
   map.presets.push(preset);
   return preset;
@@ -159,7 +183,8 @@ export function summarize(map: ContextMap, preset: Preset): WindowSummary {
     preset,
     core: map.nodes.find((n) => n.tier === "core")?.paths ?? [],
     attached: map.nodes.filter((n) => n.tier === "feature" && isLive(n, preset)),
-    detached: map.nodes.filter((n) => n.tier === "element" && n.kind !== "tool" && !isLive(n, preset) && n.of.some((f) => preset.features.includes(f))),
+    // Asleep files are left out: the note never mentions them.
+    detached: map.nodes.filter((n) => n.tier === "element" && n.kind !== "tool" && !isLive(n, preset) && !preset.asleep?.includes(n.id) && n.of.some((f) => preset.features.includes(f))),
     tokens: live.reduce((s, n) => s + n.tokens, 0),
     total: map.nodes.reduce((s, n) => s + n.tokens, 0),
   };
@@ -172,15 +197,18 @@ const list = (items: string[], max: number) => (items.length > max ? `${items.sl
  * The short note a thread gets when it starts: folder-level paths only, so it
  * stays around 100 to 200 tokens however large the project is.
  */
-export function windowNote(map: ContextMap, preset: Preset): string {
+export function windowNote(map: ContextMap, preset: Preset, warm: WeaveNode[] = []): string {
   const w = summarize(map, preset);
   const folders = w.attached.map((f) => (f.paths[0] ?? f.label));
   const lines = [
     `WEAVE context window "${preset.name}" (~${k(w.tokens)} of ${k(w.total)} mapped tokens).`,
     `Core: ${list(w.core, 6) || "none"}.`,
-    `Attached: ${list(folders, 12) || "nothing beyond the core"}.`,
   ];
+  if (warm.length) {
+    lines.push(`Warm, start here: ${list(warm.flatMap((n) => n.paths), 12)} (~${k(warm.reduce((s, n) => s + n.tokens, 0))} tokens).`);
+    lines.push(`Cold, open only when the task needs them: the rest of ${list(folders, 12) || "the project"}.`);
+  } else lines.push(`Attached: ${list(folders, 12) || "nothing beyond the core"}.`);
   if (w.detached.length) lines.push(`Detached, skip unless asked: ${list(w.detached.flatMap((n) => n.paths), 10)}.`);
-  lines.push("Work inside the attached folders first. The weave MCP tools can attach or detach nodes.");
+  lines.push(warm.length ? "Start with the warm files. The weave MCP tools can attach or detach nodes." : "Work inside the attached folders first. The weave MCP tools can attach or detach nodes.");
   return lines.join("\n");
 }
