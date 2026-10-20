@@ -71,7 +71,7 @@ const context = (event: string, text: string): HookOutput =>
 const WRAPPERS = /<(system-reminder|relay|wake|note|project_claude_message|task-notification|agent-message|command-[\w-]+|local-command-[\w-]+)\b[^>]*>[\s\S]*?<\/\1\b[^>]*>/gi;
 const UNCLOSED = /<(system-reminder|relay|wake|note|project_claude_message|task-notification|agent-message|command-[\w-]+|local-command-[\w-]+)\b[\s\S]*$/i;
 
-/** A short thread name from its first prompt: wrapper blocks and tags removed. Empty when nothing readable is left. */
+/** The first line of a prompt, for the carry-over line: wrapper blocks and tags removed. Empty when nothing readable is left. */
 export function threadName(prompt: string): string {
   return prompt.replace(WRAPPERS, " ").replace(UNCLOSED, " ").replace(/<\/?[a-z][\w-]*\b[^>]*>?/gi, " ").replace(/\s+/g, " ").trim().slice(0, 48);
 }
@@ -107,10 +107,10 @@ export function handleHook(input: HookInput, root = input.cwd ?? process.cwd()):
 
   if (event === "UserPromptSubmit") {
     const prev = readThreads(store.paths)[session];
-    const name = threadName(input.prompt ?? "");
+    const ask = threadName(input.prompt ?? "");
     const prompts = [...(prev?.prompts ?? []), Date.now()].slice(-KEEP_PROMPTS);
-    const asks = [...(prev?.asks ?? []), name].slice(-KEEP_PROMPTS);
-    const thread = writeThread(store.paths, session, { transcript: input.transcript_path ?? prev?.transcript, prompts, asks, ...(name && !prev?.named ? { name, named: true } : {}) });
+    const asks = [...(prev?.asks ?? []), ask].slice(-KEEP_PROMPTS);
+    const thread = writeThread(store.paths, session, { transcript: input.transcript_path ?? prev?.transcript, prompts, asks });
     if (!map.settings.meter) return { exitCode: 0 };
     const events = recentEvents(store.paths);
     const all = areas(map, events);

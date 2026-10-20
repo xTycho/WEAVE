@@ -197,7 +197,8 @@ test("hooks give the map note, log only finished calls, and speak at most once p
   const tx = transcript(root, "t1", 170_000);
   const prompt = handleHook({ hook_event_name: "UserPromptSubmit", session_id: "t1", cwd: root, transcript_path: tx, prompt: "<wake>x</wake> Fix the header" });
   assert.match(JSON.parse(prompt.stdout).hookSpecificOutput.additionalContext, /Run \/compact/);
-  assert.equal(readThreads(store.paths).t1.name, "Fix the header");
+  assert.equal(readThreads(store.paths).t1.name, "Thread 1", "threads are numbered, not named after a prompt");
+  assert.equal(readThreads(store.paths).t1.asks.at(-1), "Fix the header", "the prompt's first line is kept for the carry-over");
   const read = { hook_event_name: "PostToolUse", session_id: "t1", cwd: root, tool_name: "Read", tool_input: { file_path: join(root, "src/lib/format.ts") } };
   assert.equal(handleHook(read).stdout, undefined, "one line per message, already said");
   handleHook({ ...read, agent_id: "a1" });

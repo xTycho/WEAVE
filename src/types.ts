@@ -89,8 +89,11 @@ export interface ActivityEvent {
 
 export interface ThreadInfo {
   id: string;
+  /** "Thread <n>" until a title tool or the map renames it. */
   name: string;
-  /** Named from the thread's first prompt or a title tool. */
+  /** Numbered in the order threads first appear. */
+  n?: number;
+  /** Named by a title tool or by the user in the map. */
   named?: boolean;
   startedAt: number;
   lastSeen: number;

@@ -84,7 +84,9 @@ export function readThreads(paths: ProjectPaths): Record<string, ThreadInfo> {
 export function writeThread(paths: ProjectPaths, id: string, patch: Partial<ThreadInfo>): ThreadInfo {
   const all = readThreads(paths);
   const now = Date.now();
-  const t: ThreadInfo = { ...({ id, name: `Thread ${id.slice(0, 6)}`, startedAt: now } as ThreadInfo), ...all[id], ...patch, lastSeen: now };
+  // A new thread takes the next number, so names stay put as threads come and go.
+  const n = all[id]?.n ?? Math.max(0, ...Object.values(all).map((x) => x.n ?? 0)) + 1;
+  const t: ThreadInfo = { ...({ id, name: `Thread ${n}`, startedAt: now } as ThreadInfo), ...all[id], ...patch, n, lastSeen: now };
   all[id] = t;
   // Keep the 50 most recent threads.
   const kept = Object.fromEntries(Object.entries(all).sort((a, b) => b[1].lastSeen - a[1].lastSeen).slice(0, 50));
