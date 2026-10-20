@@ -8,7 +8,7 @@ import {
   ContextStore, scanProject, listenWithFallback, attach, detach, isLive, getPreset, findNode, nodeForPath,
   windowNote, spinUp, handleHook, suggestions, recentEvents, heat, warmth, HALF_LIFE, saveKey,
   overdue, OVERDUE_DAYS, sleep, presetFromHeat, tagFor, threadName, readKey, removeKey, tokenMode, startDashboard,
-  frozen, frozenLine, FREEZE_AFTER, FROZEN_CHARS, contextLevel, thresholds, normalizeMap, appendEvent, readThreads,
+  frozen, frozenLine, FREEZE_AFTER, FROZEN_CHARS, contextLevel, thresholds, normalizeMap, appendEvent, readThreads, removeThreads,
   handoff, bestPreset, startPreset, createPreset, titleFrom, calibrate, presetFromFiles,
 } from "../dist/index.js";
 import { createTools } from "../dist/mcp/tools.js";
@@ -434,6 +434,23 @@ test("a start line moves the new thread onto its preset, and title tools name th
   assert.equal(titleFrom("Read", { label: "x" }), undefined);
   handleHook({ hook_event_name: "PreToolUse", session_id: "t9", cwd: root, tool_name: "mcp__weave__weave_name_thread", tool_input: { name: "Header fixes" } });
   assert.equal(readThreads(store.paths).t9.name, "Header fixes");
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("an ended thread leaves the list while its preset and activity stay", () => {
+  const root = project();
+  const store = new ContextStore(root);
+  store.update((m) => { createPreset(m, "UI", ["src/ui"]); });
+  handleHook({ hook_event_name: "UserPromptSubmit", session_id: "a1", cwd: root, prompt: 'Continue with WEAVE preset "UI" [weave:ui].\nWork' });
+  handleHook({ hook_event_name: "UserPromptSubmit", session_id: "b2", cwd: root, prompt: "Other" });
+  handleHook({ hook_event_name: "PostToolUse", session_id: "a1", cwd: root, tool_name: "Read", tool_input: { file_path: join(root, "src/ui/App.tsx") } });
+  const events = recentEvents(store.paths).length;
+  assert.equal(removeThreads(store.paths, ["a1", "nope"]), 1, "only a known thread is counted");
+  assert.deepEqual(Object.keys(readThreads(store.paths)), ["b2"]);
+  assert.equal(store.load().map.assign.a1, "ui", "the preset still knows the thread's files");
+  assert.equal(recentEvents(store.paths).length, events, "activity is kept");
+  handleHook({ hook_event_name: "UserPromptSubmit", session_id: "a1", cwd: root, prompt: "Again" });
+  assert.ok(readThreads(store.paths).a1, "a thread that acts again comes back");
   rmSync(root, { recursive: true, force: true });
 });
 

@@ -96,6 +96,21 @@ export function writeThread(paths: ProjectPaths, id: string, patch: Partial<Thre
 }
 
 /**
+ * Drop threads from the list. Their activity stays in the log, so the presets
+ * keep what those threads taught them; a thread that acts again comes back as new.
+ */
+export function removeThreads(paths: ProjectPaths, ids: string[]): number {
+  const all = readThreads(paths);
+  const gone = ids.filter((id) => id in all);
+  if (!gone.length) return 0;
+  for (const id of gone) delete all[id];
+  const tmp = `${paths.threads}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(all, null, 2));
+  replaceFile(tmp, paths.threads);
+  return gone.length;
+}
+
+/**
  * Tokens currently in a thread's context window, from the usage numbers Claude
  * Code already writes to the session transcript. Reads only the file's tail.
  */

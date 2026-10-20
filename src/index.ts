@@ -14,7 +14,7 @@ export { frozen, frozenLine, FREEZE_AFTER, KEEP_PROMPTS, FROZEN_CHARS } from "./
 export { handoff, bestPreset, threadWarm, startLine, startPreset, calibrate, FIT_SHARE } from "./engine/handoff.js";
 export { heat, warmth, overdue, tagFor, presetFromHeat, presetFromFiles, crystalName, CRYSTALS, OVERDUE_DAYS, HALF_LIFE, WARM_AT, WARM_MAX, HOT_AT, HOT_MAX } from "./engine/heat.js";
 export { readKey, saveKey, removeKey, tokenMode, countExact } from "./engine/tokens.js";
-export { appendEvent, recentEvents, readThreads, transcriptTokens } from "./engine/activity.js";
+export { appendEvent, recentEvents, readThreads, removeThreads, transcriptTokens } from "./engine/activity.js";
 export * from "./engine/window.js";
 export { projectPaths, userConfigDir, toRelative } from "./paths.js";
 export { debounce, watchFiles, watchProject } from "./watch.js";

@@ -3,7 +3,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
-import { ActivityTail, readThreads, recentEvents, transcriptTokens, writeThread } from "../engine/activity.js";
+import { ActivityTail, readThreads, recentEvents, removeThreads, transcriptTokens, writeThread } from "../engine/activity.js";
 import { heat, overdue, presetFromFiles, presetFromHeat, warmth } from "../engine/heat.js";
 import { frozen } from "../engine/freeze.js";
 import { handoff, startLine, threadWarm, type Handoff } from "../engine/handoff.js";
@@ -183,6 +183,15 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
       if (name) writeThread(store.paths, id, { name, named: true });
       pushState();
       return true;
+    },
+    "/api/threads/end": (b) => {
+      const id = s(b.thread), all = readThreads(store.paths);
+      // "older" clears every thread idle for over a day; a single id ends just that thread.
+      const ids = b.older === true ? Object.values(all).filter((t) => Date.now() - t.lastSeen >= 864e5).map((t) => t.id) : id ? [id] : [];
+      if (!ids.length) throw new WeaveError(b.older === true ? "No older threads to clear." : "Unknown thread.");
+      const n = removeThreads(store.paths, ids);
+      pushState();
+      return n;
     },
     "/api/settings": (b) => act(b, (m) => {
       if (typeof b.autoApply === "boolean") m.settings.autoApply = b.autoApply;

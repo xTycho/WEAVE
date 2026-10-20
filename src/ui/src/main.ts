@@ -418,7 +418,8 @@ let naming: string | null = null;
 const RECENT = 864e5;
 let showOld = false;
 const ICON_NEW = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 2.5h4v4M13.5 2.5 8 8M6.5 3.5h-3a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-3"/></svg>';
-const ICON_MOVE = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6.5 8 10.5l4-4"/></svg>';
+const ICON_END = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"/></svg>';
+const ICON_MOVE ='<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6.5 8 10.5l4-4"/></svg>';
 
 /**
  * One line per thread: what it is doing, its name, how full its context is,
@@ -444,8 +445,9 @@ function threadRow(t: Thread, p: Preset): HTMLLIElement {
     + `<button class="tmain" aria-pressed="${t.id === selThread}" title="${esc(tip)}">${esc(name)}</button>`
     + `<span class="tbar" title="${esc(meter)}"><i></i><small>${tok ? fmt(tok).replace(/\.\dk$/, "k") : ""}</small></span>`
     + (hTip ? `<button class="ibtn new" title="${esc(hTip)}" aria-label="${esc(hTip)}">${ICON_NEW}</button>` : "<span hidden></span>")
-    + `<label class="ibtn move" title="Move to another preset">${ICON_MOVE}<select aria-label="Preset for ${esc(name)}">${S!.map.presets.map((x) => `<option value="${esc(x.id)}" ${x.id === t.preset ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>`;
-  const main = li.querySelector<HTMLButtonElement>(".tmain")!;
+    + `<label class="ibtn move" title="Move to another preset">${ICON_MOVE}<select aria-label="Preset for ${esc(name)}">${S!.map.presets.map((x) => `<option value="${esc(x.id)}" ${x.id === t.preset ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>`
+    + `<button class="ibtn end" title="End thread: clear it from the map. ${esc(p.name)} keeps what it learned." aria-label="End thread ${esc(name)}">${ICON_END}</button>`;
+  const main =li.querySelector<HTMLButtonElement>(".tmain")!;
   main.addEventListener("click", (e) => { if (e.detail > 1) return; selThread = selThread === t.id ? null : t.id; store.set("weave.thread", selThread ?? ""); renderAll(); });
   main.addEventListener("dblclick", () => {
     naming = t.id;
@@ -465,6 +467,10 @@ function threadRow(t: Thread, p: Preset): HTMLLIElement {
     input.addEventListener("blur", () => end(true));
   });
   li.querySelector("select")!.addEventListener("change", (e) => api("/api/assign", { thread: t.id, preset: (e.target as HTMLSelectElement).value }).catch((err) => toast(err.message)));
+  li.querySelector(".ibtn.end")!.addEventListener("click", () => {
+    if (selThread === t.id) { selThread = null; store.set("weave.thread", ""); }
+    api("/api/threads/end", { thread: t.id }).then(() => toast(`Thread cleared. ${p.name} keeps what it learned.`)).catch((e) => toast(e.message));
+  });
   const done = (line: string, preset: string) => copy(line).then(() => toast(`Start line copied. Paste it into a new thread to start on ${preset}.`));
   li.querySelector<HTMLButtonElement>(".ibtn.new")?.addEventListener("click", () => {
     if (h?.preset && h.line) done(h.line, h.preset.name);
@@ -520,8 +526,9 @@ function renderPresets() {
   if (old) {
     const more = document.createElement("li");
     more.className = "older";
-    more.innerHTML = `<button>${showOld ? "Hide" : "Show"} ${old} older thread${old === 1 ? "" : "s"}</button>`;
-    more.querySelector("button")!.onclick = () => { showOld = !showOld; renderPresets(); };
+    more.innerHTML = `<button class="fold">${showOld ? "Hide" : "Show"} ${old} older thread${old === 1 ? "" : "s"}</button><button class="clear" title="Clear every thread idle for over a day. Presets keep what they learned.">Clear</button>`;
+    more.querySelector<HTMLButtonElement>(".fold")!.onclick = () => { showOld = !showOld; renderPresets(); };
+    more.querySelector<HTMLButtonElement>(".clear")!.onclick = () => api("/api/threads/end", { older: true }).then((n) => toast(`Cleared ${n} older thread${n === 1 ? "" : "s"}.`)).catch((e) => toast(e.message));
     box.appendChild(more);
   }
   if (!S.threads.length) box.insertAdjacentHTML("beforeend", '<li class="empty">No threads yet. They appear here once Claude Code runs in this project with the WEAVE hooks.</li>');

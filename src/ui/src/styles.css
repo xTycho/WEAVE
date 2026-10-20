@@ -224,7 +224,7 @@ header::before { content: ""; position: absolute; inset: 0 0 auto; height: 3px; 
 .plist em { grid-column: 4; font-style: normal; font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .tlist { list-style: none; margin: 0; padding: 0 4px 6px 20px; display: grid; gap: 0; min-width: 0; }
 /* A thread: orb, name, context bar, hand-off and move. Details live in tooltips. */
-.thread { display: grid; grid-template-columns: 16px minmax(0, 1fr) 48px auto auto; align-items: center; gap: 6px; min-width: 0; height: 30px; padding: 0 4px 0 6px; border-radius: 8px; }
+.thread { display: grid; grid-template-columns: 16px minmax(0, 1fr) 48px auto auto auto; align-items: center; gap: 6px; min-width: 0; height: 30px; padding: 0 4px 0 6px; border-radius: 8px; }
 .thread:hover { background: var(--surface-2); }
 .thread.sel { box-shadow: inset 0 0 0 1.5px var(--frost); }
 .tname { min-width: 0; height: 24px; border-radius: 6px; border: 1px solid var(--fg); background: var(--card); padding: 0 6px; color: var(--fg); font: 500 12.5px var(--body); }
@@ -251,7 +251,9 @@ header::before { content: ""; position: absolute; inset: 0 0 auto; height: 3px; 
 .ctx-full .ibtn.new { background: var(--red-bg); box-shadow: inset 0 0 0 1px var(--red); }
 /* The native select sits invisibly over the chevron, so the menu is the system's own. */
 .ibtn.move select { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
-.plist > li.older { padding: 2px 10px; }
+.ibtn.end { opacity: 0; }
+.thread:hover .ibtn.end, .ibtn.end:focus-visible { opacity: 1; }
+.plist > li.older { padding: 2px 10px; display: flex; gap: 14px; }
 .older button { border: 0; background: none; padding: 4px 0; color: var(--dim); font: 400 12px var(--body); cursor: pointer; }
 .older button:hover { color: var(--fg); text-decoration: underline; }
 .plist > li.empty { padding: 4px 10px; border: 0; }
