@@ -2,3 +2,5 @@
 src/ui/dist/**/*.js text eol=lf
 src/ui/dist/**/*.css text eol=lf
 src/ui/dist/*.html text eol=lf
+# The page template is copied into the build, so it stays LF too.
+src/ui/index.html text eol=lf
