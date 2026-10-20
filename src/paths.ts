@@ -1,3 +1,4 @@
+import { renameSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
@@ -40,4 +41,19 @@ export function toRelative(root: string, file: string): string | undefined {
   const rel = relative(root, abs);
   if (!rel || rel.startsWith("..") || isAbsolute(rel)) return undefined;
   return rel.split(sep).join("/");
+}
+
+/**
+ * Moves a finished temp file over `dest`. On Windows a rename fails while
+ * another process (a hook, the map, an editor) has the file open, so it waits
+ * briefly and retries before giving up.
+ */
+export function replaceFile(tmp: string, dest: string): void {
+  for (let i = 0; ; i++) {
+    try { renameSync(tmp, dest); return; } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if ((code !== "EPERM" && code !== "EBUSY" && code !== "EACCES") || i >= 20) { try { unlinkSync(tmp); } catch { /* gone */ } throw err; }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+    }
+  }
 }

@@ -9,6 +9,7 @@ import {
   windowNote, spinUp, handleHook, suggestions, recentEvents, heat, warmth, HALF_LIFE, saveKey,
   overdue, OVERDUE_DAYS, sleep, presetFromHeat, tagFor, threadName, readKey, removeKey, tokenMode, startDashboard,
   frozen, frozenLine, FREEZE_AFTER, FROZEN_CHARS, contextLevel, thresholds, normalizeMap, appendEvent, readThreads,
+  handoff, bestPreset, startPreset, createPreset, titleFrom,
 } from "../dist/index.js";
 import { createTools } from "../dist/mcp/tools.js";
 
@@ -302,13 +303,15 @@ test("context warnings follow fixed, adjustable thresholds", () => {
   const st = { heavyAt: 150_000, freshAt: 300_000 };
   assert.deepEqual(contextLevel(undefined, st), { level: "ok" });
   assert.deepEqual(contextLevel(149_999, st), { level: "ok" });
-  assert.deepEqual(contextLevel(150_000, st), { level: "heavy", text: "This thread is getting heavy, run /compact" });
-  assert.deepEqual(contextLevel(300_000, st), { level: "full", text: "Start a fresh thread for the next task" });
+  assert.deepEqual(contextLevel(150_000, st), { level: "heavy", text: "This thread is getting heavy, start a new thread for the next task" });
+  assert.deepEqual(contextLevel(300_000, st), { level: "full", text: "Start a new thread now" });
   assert.equal(contextLevel(90_000, { heavyAt: 80_000, freshAt: 100_000 }).level, "heavy");
   assert.deepEqual(thresholds(500_000, 200_000), { heavyAt: 500_000, freshAt: 500_000 }, "red never comes before amber");
   assert.deepEqual(thresholds(1, 9e9), { heavyAt: 10_000, freshAt: 2_000_000 });
   const { settings } = normalizeMap({});
-  assert.deepEqual([settings.freeze, settings.heavyAt, settings.freshAt], [true, 150_000, 300_000], "freezing is on by default");
+  assert.deepEqual([settings.freeze, settings.heavyAt, settings.freshAt], [true, 50_000, 100_000], "freezing is on, warnings at 50k and 100k by default");
+  assert.deepEqual(thresholds(normalizeMap({ settings: { heavyAt: 150_000, freshAt: 300_000 } }).settings.heavyAt, 0).heavyAt, 50_000, "maps on the old defaults move to the new ones");
+  assert.equal(normalizeMap({ settings: { heavyAt: 120_000, freshAt: 300_000 } }).settings.heavyAt, 120_000, "a chosen threshold is kept");
 });
 
 test("the map server reports each thread's context level and frozen files", async () => {
@@ -316,7 +319,7 @@ test("the map server reports each thread's context level and frozen files", asyn
   const store = new ContextStore(root);
   const now = Date.now(), min = 60_000;
   const transcript = join(root, "t1.jsonl");
-  writeFileSync(transcript, JSON.stringify({ message: { usage: { input_tokens: 10, cache_read_input_tokens: 160_000, output_tokens: 5 } } }) + "\n");
+  writeFileSync(transcript, JSON.stringify({ message: { usage: { input_tokens: 10, cache_read_input_tokens: 60_000, output_tokens: 5 } } }) + "\n");
   mkdirSync(store.paths.weaveDir, { recursive: true });
   appendEvent(store.paths, { t: now - 30 * min, s: "t1", ph: "end", verb: "Read", node: "src/ui/App.tsx", tool: "Read" });
   writeFileSync(store.paths.threads, JSON.stringify({ t1: { id: "t1", name: "x", startedAt: now - 40 * min, lastSeen: now, transcript, prompts: [now - 40 * min, now - 20 * min, now] } }));
@@ -326,7 +329,9 @@ test("the map server reports each thread's context level and frozen files", asyn
   let t = (await state()).threads[0];
   assert.equal(t.context.level, "heavy");
   assert.deepEqual(t.frozen, ["src/ui/App.tsx"]);
-  await post({ freshAt: 150_000 });
+  assert.equal(t.next.preset.id, "full", "past the warning it suggests a new thread on the best fitting preset");
+  assert.ok(t.next.line.endsWith("[weave:full]. Last thread: 1 file read, 0 edited in src/ui/."));
+  await post({ freshAt: 55_000 });
   t = (await state()).threads[0];
   assert.equal(t.context.level, "full", "the thresholds are adjustable");
   await post({ freeze: false });
@@ -392,4 +397,42 @@ test("port allocation falls back to the next free port", async () => {
   const got = await listenWithFallback(next, base, "127.0.0.1", 50);
   assert.ok(got > base);
   await Promise.all([new Promise((r) => blocker.close(r)), new Promise((r) => next.close(r))]);
+});
+
+test("a new thread is suggested on the preset that best covers the thread's work", () => {
+  const root = project();
+  const store = new ContextStore(root);
+  const now = Date.now();
+  const ev = (node, verb = "Read", s = "t1") => ({ t: now, s, ph: "end", verb, node, tool: "x" });
+  const { map } = store.load();
+  const events = [ev("src/ui/App.tsx"), ev("src/ui/theme.css", "Edit"), ev("src/ui/App.tsx", "Edit"), ev("docs/guide.md", "Read", "t2")];
+  assert.equal(handoff(map, events, "nobody", now), undefined, "nothing to hand off without activity");
+  assert.equal(bestPreset(map, events, "t1", now).id, "full", "only the full project fits at first");
+  const ui = createPreset(map, "UI", ["src/ui"]);
+  const api = createPreset(map, "API", ["src/api"]);
+  const h = handoff(map, events, "t1", now);
+  assert.equal(h.preset.id, ui.id, "the preset with the same share and fewer tokens wins");
+  assert.deepEqual([h.read, h.edited, h.folders], [2, 2, ["src/ui/"]]);
+  assert.equal(startPreset(h.line), ui.id);
+  map.settings.heavyAt = 10;
+  const none = handoff(map, events, "t1", now);
+  assert.equal(none.preset, undefined, "no preset fits under the warning");
+  assert.deepEqual(none.save, { name: "UI", files: 2 }, "so it offers to save the warm files, tagged by fixed rules");
+  assert.ok(api);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("a start line moves the new thread onto its preset, and title tools name threads", () => {
+  const root = project();
+  const store = new ContextStore(root);
+  store.update((m) => { createPreset(m, "UI", ["src/ui"]); });
+  const out = handleHook({ hook_event_name: "UserPromptSubmit", session_id: "t9", cwd: root, prompt: 'Continue with WEAVE preset "UI" [weave:ui]. Last thread: 2 files read, 1 edited in src/ui/.\nFix the header' });
+  assert.equal(store.load().map.assign.t9, "ui");
+  assert.match(JSON.parse(out.stdout).hookSpecificOutput.additionalContext, /WEAVE context window "UI"/);
+  assert.equal(readThreads(store.paths).t9.name, "Fix the header", "the start line is not the thread's name");
+  assert.equal(titleFrom("mcp__hearthbot__set_thread_label", { label: " WEAVE thread hand-off " }), "WEAVE thread hand-off");
+  assert.equal(titleFrom("Read", { label: "x" }), undefined);
+  handleHook({ hook_event_name: "PreToolUse", session_id: "t9", cwd: root, tool_name: "mcp__weave__weave_name_thread", tool_input: { name: "Header fixes" } });
+  assert.equal(readThreads(store.paths).t9.name, "Header fixes");
+  rmSync(root, { recursive: true, force: true });
 });

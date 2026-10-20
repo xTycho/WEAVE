@@ -1,5 +1,6 @@
 import { appendEvent, readThreads, recentEvents, writeThread } from "../engine/activity.js";
 import { frozen, frozenLine, KEEP_PROMPTS } from "../engine/freeze.js";
+import { startPreset, withoutStart } from "../engine/handoff.js";
 import { warmth } from "../engine/heat.js";
 import { suggestions } from "../engine/rules.js";
 import { attach, isLive, nodeForPath, presetFor, wake, windowNote } from "../engine/window.js";
@@ -74,6 +75,16 @@ export function threadName(prompt: string): string {
   return prompt.replace(WRAPPERS, " ").replace(UNCLOSED, " ").replace(/<\/?[a-z][\w-]*\b[^>]*>?/gi, " ").replace(/\s+/g, " ").trim().slice(0, 48);
 }
 
+/** Tools that set a thread's title in the app, and WEAVE's own naming tool. Their title names the thread on the map. */
+const TITLE_TOOLS = /(^|__)(set_thread_label|set_session_title|weave_name_thread)$/;
+
+/** The thread title a tool call sets, if it is one of TITLE_TOOLS. */
+export function titleFrom(tool: string, input: Record<string, unknown> = {}): string | undefined {
+  if (!TITLE_TOOLS.test(tool)) return undefined;
+  const v = [input.label, input.title, input.name].find((x): x is string => typeof x === "string");
+  return v?.replace(/\s+/g, " ").trim().slice(0, 80) || undefined;
+}
+
 export function handleHook(input: HookInput, root = input.cwd ?? process.cwd()): HookOutput {
   const store = new ContextStore(root);
   const { map } = store.load(false);
@@ -87,24 +98,33 @@ export function handleHook(input: HookInput, root = input.cwd ?? process.cwd()):
     return json({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: windowNote(map, preset, warmth(map, preset, recentEvents(store.paths)).warm) } });
   }
   if (event === "UserPromptSubmit") {
-    const name = threadName(input.prompt ?? "");
+    const name = threadName(withoutStart(input.prompt ?? ""));
     const prev = readThreads(store.paths)[session];
     const prompts = [...(prev?.prompts ?? []), Date.now()].slice(-KEEP_PROMPTS);
     writeThread(store.paths, session, { transcript: input.transcript_path, prompts, ...(name && !prev?.named ? { name, named: true } : {}) });
+    // A start line from the map moves this thread onto the preset it names, and the thread gets that preset's note.
+    const asked = startPreset(input.prompt ?? "");
+    const moved = asked && map.presets.find((p) => p.id === asked);
+    if (moved) store.update((m) => { m.assign[session] = moved.id; });
+    const note = moved ? windowNote(map, moved, warmth(map, moved, recentEvents(store.paths)).warm) : undefined;
     const line = map.settings.freeze ? frozenLine(frozen(map, recentEvents(store.paths), session, prompts).map((n) => n.paths[0] ?? n.id)) : undefined;
-    return line ? json({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: line } }) : { exitCode: 0 };
+    const context = [note, line].filter(Boolean).join("\n");
+    return context ? json({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: context } }) : { exitCode: 0 };
   }
   if (event !== "PreToolUse" && event !== "PostToolUse") return { exitCode: 0 };
+  const title = event === "PreToolUse" ? titleFrom(input.tool_name ?? "", input.tool_input) : undefined;
+  if (title) { writeThread(store.paths, session, { name: title, named: true }); return { exitCode: 0 }; }
 
   const hit = classify(map, store.root, input.tool_name ?? "", input.tool_input);
   if (!hit) return { exitCode: 0 };
-  let outside = !isLive(hit.node, preset);
+  let outside = !isLive(hit.node, preset), woke = false;
   // An asleep file wakes the moment Claude reads or edits it, whatever the other settings say.
   if (outside && preset.asleep?.includes(hit.node.id)) {
     store.update((m) => { wake(m, preset.id, hit.node.id); });
     outside = false;
+    woke = true;
   }
-  const base: ActivityEvent = { t: Date.now(), s: session, ph: event === "PreToolUse" ? "start" : "end", verb: hit.verb, node: hit.node.id, tool: input.tool_name ?? "", id: input.tool_use_id, ...(hit.path ? { path: hit.path } : {}), ...(outside ? { outside: true } : {}) };
+  const base: ActivityEvent = { t: Date.now(), s: session, ph: event === "PreToolUse" ? "start" : "end", verb: hit.verb, node: hit.node.id, tool: input.tool_name ?? "", id: input.tool_use_id, ...(hit.path ? { path: hit.path } : {}), ...(outside ? { outside: true } : {}), ...(woke ? { woke: true } : {}) };
 
   if (event === "PreToolUse" && outside && map.settings.gate === "block" && hit.node.kind !== "tool") {
     appendEvent(store.paths, { ...base, blocked: true });

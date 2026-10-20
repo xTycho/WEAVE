@@ -1,6 +1,6 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { projectPaths, type ProjectPaths } from "./paths.js";
+import { projectPaths, replaceFile, type ProjectPaths } from "./paths.js";
 import { scanProject, type TokenLookup } from "./scanner/project-scanner.js";
 import { tokenLookup } from "./engine/tokens.js";
 import { PALETTE } from "./engine/window.js";
@@ -13,7 +13,7 @@ export interface LoadedMap {
 }
 
 const KINDS: Kind[] = ["core", "feature", "code", "design", "doc", "test", "tool"];
-const DEFAULT_SETTINGS: Settings = { autoApply: false, warmCold: true, freeze: true, heavyAt: 150_000, freshAt: 300_000, gate: "flag", idleAfter: 10, defaultPreset: "full" };
+const DEFAULT_SETTINGS: Settings = { autoApply: false, warmCold: true, freeze: true, heavyAt: 50_000, freshAt: 100_000, gate: "flag", idleAfter: 10, defaultPreset: "full" };
 
 /** Context thresholds stay between 10k and 2M tokens, and fresh is never below heavy. */
 export function thresholds(heavy: unknown, fresh: unknown): { heavyAt: number; freshAt: number } {
@@ -79,7 +79,8 @@ export function normalizeMap(raw: unknown): ContextMap {
       autoApply: s.autoApply === true,
       warmCold: s.warmCold !== false,
       freeze: s.freeze !== false,
-      ...thresholds(s.heavyAt, s.freshAt),
+      // Maps saved with the old 150k / 300k defaults move to the new ones; any other choice is kept.
+      ...(s.heavyAt === 150_000 && s.freshAt === 300_000 ? thresholds(undefined, undefined) : thresholds(s.heavyAt, s.freshAt)),
       gate: s.gate === "block" ? "block" : "flag",
       idleAfter: Math.min(500, Math.max(3, Number(s.idleAfter) || DEFAULT_SETTINGS.idleAfter)),
       defaultPreset: str(s.defaultPreset, presets[0]?.id ?? DEFAULT_SETTINGS.defaultPreset),
@@ -156,7 +157,7 @@ export class ContextStore {
     mkdirSync(dirname(this.paths.map), { recursive: true });
     const tmp = `${this.paths.map}.${process.pid}.tmp`;
     writeFileSync(tmp, JSON.stringify({ ...map, updatedAt: new Date().toISOString() }, null, 2) + "\n", "utf8");
-    renameSync(tmp, this.paths.map);
+    replaceFile(tmp, this.paths.map);
   }
 
   /** Load, mutate, save, return. Reads right before writing so concurrent writers lose as little as possible. */

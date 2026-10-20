@@ -225,7 +225,11 @@ html.still .embers { display: none; }
 .world.searching .cord { opacity: .2; }
 /* Context panel: the default view, saved presets and the threads on each. */
 .plist { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; min-width: 0; }
-.plist > li { min-width: 0; border: 1px solid transparent; border-radius: 12px; }
+.plist > li { min-width: 0; border: 1px solid transparent; border-radius: 12px; position: relative; }
+/* In use: a thread on this preset is working now. Pinned to the top with coals and embers, like a hot node. */
+.plist > li.inuse { border-color: #F6A35A; box-shadow: 0 0 0 1px #F6A35A, 0 0 22px -6px #F28B4B; isolation: isolate; }
+.plist > li.inuse > .skin { z-index: -1; }
+.plist > li.inuse > .embers { z-index: 1; }
 .plist > li.cur { background: var(--surface); border-color: var(--line-2); }
 .plist .pick { width: 100%; min-width: 0; display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: start; gap: 10px; padding: 10px; border: 0; border-radius: 12px; background: transparent; cursor: pointer; text-align: left; color: inherit; }
 .plist > li:not(.cur) .pick:hover { background: var(--surface-2); }
@@ -234,28 +238,35 @@ html.still .embers { display: none; }
 .plist .pmain b { font: 500 13.5px/1.2 var(--body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .plist small { color: var(--dim); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .plist em { font-style: normal; font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.tlist { list-style: none; margin: 0; padding: 0 10px 10px 30px; display: grid; gap: 8px; min-width: 0; }
-.thread { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-width: 0; padding: 4px 6px; margin: 0 -6px; border-radius: 8px; }
+.tlist { list-style: none; margin: 0; padding: 0 8px 8px; display: grid; gap: 6px; min-width: 0; }
+/* A thread row: name on top, its status and preset below, then any warning and the new-thread suggestion across the full width. */
+.thread { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; grid-template-areas: "icon name name" ". stat pick" "warn warn warn" "hand hand hand";
+  align-items: center; column-gap: 8px; row-gap: 2px; min-width: 0; padding: 8px 10px; border-radius: 10px; background: var(--card); border: 1px solid var(--line); }
+.thread > .ticon { grid-area: icon; }
+.thread > .tmain, .thread > .tname { grid-area: name; }
+.thread > .tstat { grid-area: stat; color: var(--dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.thread > select { grid-area: pick; }
+.thread > .cwarn { grid-area: warn; margin: 6px 0 0; font-size: 12px; font-weight: 500; line-height: 1.35; display: flex; align-items: baseline; gap: 6px; }
+.thread > .handoff { grid-area: hand; }
+.tname { min-width: 0; height: 24px; border-radius: 6px; border: 1px solid var(--fg); background: var(--card); padding: 0 6px; color: var(--fg); font: 500 12.5px var(--body); }
 .thread.sel { box-shadow: inset 0 0 0 1.5px var(--frost); }
 /* Context warnings: amber from the first threshold, red from the second. */
 .thread.ctx-heavy { background: var(--amber-bg); box-shadow: inset 3px 0 0 var(--amber); }
 .thread.ctx-full { background: var(--red-bg); box-shadow: inset 3px 0 0 var(--red); }
 .thread.sel.ctx-heavy { box-shadow: inset 3px 0 0 var(--amber), inset 0 0 0 1.5px var(--frost); }
 .thread.sel.ctx-full { box-shadow: inset 3px 0 0 var(--red), inset 0 0 0 1.5px var(--frost); }
-.tmain .cwarn { font-weight: 500; color: var(--fg); white-space: normal; }
-.ctx-heavy .cwarn::before, .ctx-full .cwarn::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; background: var(--amber); }
+.ctx-heavy .cwarn::before, .ctx-full .cwarn::before { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; transform: translateY(-1px); background: var(--amber); }
 .ctx-full .cwarn::before { background: var(--red); }
 .ticon { width: 20px; height: 20px; display: grid; place-items: center; }
 .ticon canvas { width: 20px; height: 20px; display: none; filter: contrast(1.6); }
-.ticon i { width: 8px; height: 8px; border-radius: 50%; background: var(--line-2); }
+.ticon i { width: 8px; height: 8px; border-radius: 50%; background: var(--line-2); display: block; }
 .thread.live .ticon i { background: var(--c); animation: breathe 1.6s ease-in-out infinite; }
 .thread.busy .ticon canvas { display: block; }
 .thread.busy .ticon i { display: none; }
-.tmain { min-width: 0; display: grid; gap: 1px; padding: 0; border: 0; background: none; text-align: left; cursor: pointer; color: inherit; }
+.tmain { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; padding: 0; border: 0; background: none; text-align: left; cursor: pointer; color: inherit; line-height: 18px; overflow: hidden; overflow-wrap: anywhere; }
 .tmain:hover b { text-decoration: underline; text-decoration-color: var(--line-2); text-underline-offset: 2px; }
-.tmain b { font: 500 12.5px/1.25 var(--body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tmain small { font-size: 11px; }
-.thread select { height: 26px; max-width: 108px; border-radius: 6px; border: 1px solid var(--line-2); background: var(--card); padding: 0 6px; color: var(--fg); font: 400 11.5px var(--body); }
+.tmain b { font: 500 12.5px/18px var(--body); }
+.thread select { height: 24px; max-width: 120px; border-radius: 6px; border: 1px solid var(--line-2); background: var(--card); padding: 0 6px; color: var(--fg); font: 400 11.5px var(--body); }
 .plist > li.empty { padding: 4px 10px; border: 0; }
 .switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; }
 .switch > button { flex: none;  width: 44px; height: 24px; min-width: 0; padding: 0; border-radius: 6px; border: 1px solid var(--line-2); background: var(--surface); position: relative; cursor: pointer; }
@@ -288,10 +299,20 @@ aside { border-left: 1px solid var(--line); overflow-y: auto; display: flex; fle
 .legend span { display: flex; align-items: center; gap: 8px; }
 .legend i { width: 18px; height: 3px; border-radius: 2px; display: inline-block; }
 .feed { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 12.5px; }
-.feed li:not(.empty) { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto 8px; gap: 8px; align-items: center; animation: slide .4s ease; min-width: 0; padding: 3px 0; }
+.feed > li:not(.empty) { animation: slide .4s ease; min-width: 0; }
+.feed .hrow { width: 100%; display: grid; grid-template-columns: 12px 56px minmax(0, 1fr) auto 8px; gap: 8px; align-items: center; min-width: 0; padding: 3px 4px; margin: 0 -4px; border: 0; border-radius: 6px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.feed .hrow:hover:not(:disabled) { background: var(--surface-2); }
+.feed .hrow:disabled { cursor: default; }
+.feed .hrow:disabled .chev { visibility: hidden; }
+.feed .chev { width: 12px; height: 12px; fill: none; stroke: var(--dim); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; transition: transform .15s; }
+.feed .hrow[aria-expanded="true"] .chev { transform: rotate(90deg); }
+/* The still Live tree inside an open History row. */
+.live.mini { margin: 2px 0 6px 20px; padding: 8px 10px; border-radius: 10px; background: var(--surface); font-size: 12px; }
+.live.mini .note { margin: 4px 0 0; font-size: 11px; color: var(--dim); }
+.live .vdot { width: 8px; height: 8px; border-radius: 50%; background: var(--vc); justify-self: center; }
 .feed time { font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
 .feed .verb { font: 500 10px/1 var(--body); letter-spacing: .1em; text-transform: uppercase; color: var(--fg); border-left: 3px solid var(--vc); padding-left: 6px; }
-.feed li code { font: 400 12px var(--body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.feed .hrow code { font: 400 12px var(--body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .feed .who { width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
 .feed li.blocked code { text-decoration: line-through; color: var(--dim); }
 @keyframes slide { from { opacity: 0; transform: translateY(-4px); } }
@@ -380,14 +401,26 @@ button:disabled { opacity: .5; cursor: default; }
 .live .leaf small { color: var(--dim); font-size: 11px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .live .who { width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
 
-/* Frozen: files the selected thread moved on from. Frost over the card and a flake in the corner. */
-.node.frozen { border-color: var(--frost); background: linear-gradient(160deg, var(--frost-bg), transparent 75%), radial-gradient(circle at 88% 12%, var(--frost-bg) 0 18px, transparent 19px), var(--card);
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,.35), 0 0 14px -3px var(--frost); }
-.node.frozen::after { content: "❄"; position: absolute; right: 6px; bottom: -9px; width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%;
-  background: var(--card); border: 1px solid var(--frost); color: var(--frost); font-size: 11px; line-height: 1; }
+/* Textures inside a node, under its text: the node's transform makes it a stacking context, so z-index -1 stays above its background. */
+.skin { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; pointer-events: none; z-index: -1; }
+/* Hot: a soft warmth rising from the bottom edge, breathing slowly. No pattern, just colour. */
+.skin-hot { background: radial-gradient(130% 85% at 50% 115%, rgba(246,163,90,.30), rgba(255,210,122,.10) 55%, transparent 80%); animation: warmth 4.5s ease-in-out infinite; }
+@keyframes warmth { 50% { opacity: .6; } }
+/* Frozen: files the selected thread moved on from. A cool wash from the top corner, a frosted inner edge, and a few specks drifting down. */
+.node.frozen { border-color: var(--frost); box-shadow: inset 0 0 0 1px rgba(255,255,255,.4), 0 0 14px -4px var(--frost); }
+.skin-frost { background: radial-gradient(110% 100% at 0% 0%, rgba(143,195,230,.38), transparent 60%), radial-gradient(90% 80% at 100% 100%, rgba(143,195,230,.16), transparent 70%), linear-gradient(180deg, rgba(255,255,255,.22), transparent 45%); }
+.skin-frost i { position: absolute; left: var(--x); top: var(--y); width: 3px; height: 3px; border-radius: 50%; background: var(--frost); opacity: 0;
+  animation: speck var(--t) linear var(--d) infinite; }
+@keyframes speck {
+  0% { transform: translateY(-8px); opacity: 0; }
+  25%, 70% { opacity: .55; }
+  100% { transform: translateY(14px); opacity: 0; }
+}
+html.still .skin { animation: none; }
+html.still .skin-frost i { display: none; }
 .node.frozen.sel { box-shadow: 0 0 0 2px var(--fg), 0 0 14px -3px var(--frost); }
 .world.dots .node.frozen { border-color: var(--frost); box-shadow: 0 0 calc(14px * var(--inv, 1)) calc(-3px * var(--inv, 1)) var(--frost); }
-.world.dots .node.frozen::after { display: none; }
+.world.dots .skin-frost i { display: none; }
 .editing.frost { border-color: var(--frost); }
 .editing.frost > i { background: var(--frost); border-radius: 50%; }
 .legend i.frost { background: var(--frost); box-shadow: 0 0 6px var(--frost); }
@@ -396,3 +429,9 @@ button:disabled { opacity: .5; cursor: default; }
 .nums { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12.5px; color: var(--dim); }
 .nums label { display: inline-flex; align-items: center; gap: 6px; }
 .nums input { width: 72px; height: 30px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--card); padding: 0 8px; color: var(--fg); font: 400 13px var(--body); font-variant-numeric: tabular-nums; }
+
+/* New-thread suggestion under a thread past its warning. */
+.handoff { margin-top: 8px; padding: 10px; border-radius: 8px; background: var(--surface); display: grid; gap: 8px; min-width: 0; }
+.handoff p { margin: 0; font-size: 12px; line-height: 1.4; }
+.handoff code { font: 400 11px/1.4 var(--body); color: var(--dim); overflow-wrap: anywhere; }
+.handoff .btn { justify-self: start; }

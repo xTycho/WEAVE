@@ -97,16 +97,20 @@ export function tagFor(map: ContextMap, files: WeaveNode[]): string {
 }
 
 /**
- * Saves the current heat as a preset: the features that hold the warm files,
- * with every other file in them detached. Named by `tagFor`. Works whether or
- * not the warm and cold switch is on.
+ * Saves files as a preset: the features that hold them, with every other file
+ * in those features detached. Named by `tagFor`.
  */
+export function presetFromFiles(map: ContextMap, files: WeaveNode[]): Preset {
+  const keep = new Set(files.map((n) => n.id));
+  const features = [...new Set(files.map((n) => n.of[0]).filter((f): f is string => !!f))];
+  const preset = createPreset(map, tagFor(map, files), features);
+  preset.detached = map.nodes.filter((n) => n.tier === "element" && n.kind !== "tool" && !keep.has(n.id) && isLive(n, preset)).map((n) => n.id);
+  return preset;
+}
+
+/** Saves the current heat as a preset of the warm files. Works whether or not the warm and cold switch is on. */
 export function presetFromHeat(map: ContextMap, base: Preset, events: ActivityEvent[], now = Date.now()): Preset {
   const { warm } = rank(map, base, events, now);
   if (!warm.length) throw new WeaveError("Nothing is warm yet. Work in the project for a while, then save its heat as a preset.");
-  const keep = new Set(warm.map((n) => n.id));
-  const features = [...new Set(warm.map((n) => n.of[0]).filter((f): f is string => !!f))];
-  const preset = createPreset(map, tagFor(map, warm), features);
-  preset.detached = map.nodes.filter((n) => n.tier === "element" && n.kind !== "tool" && !keep.has(n.id) && isLive(n, preset)).map((n) => n.id);
-  return preset;
+  return presetFromFiles(map, warm);
 }

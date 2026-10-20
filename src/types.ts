@@ -104,6 +104,8 @@ export interface ActivityEvent {
   path?: string;
   tool: string;
   outside?: boolean;
+  /** The file was asleep and woke (reattached) for this action. */
+  woke?: boolean;
   blocked?: boolean;
   /** Pairs a start with its end. */
   id?: string;

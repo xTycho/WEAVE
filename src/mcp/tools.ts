@@ -92,6 +92,11 @@ export function createTools(store: ContextStore) {
         return { ok: true, window: context(result.id) };
       }),
     },
+    weave_name_thread: {
+      description: "Name this thread on the WEAVE map, for example after its title in the app. The WEAVE hook reads the name from this call, so nothing else is needed.",
+      inputSchema: { name: z.string().min(1).max(80) },
+      handler: guarded(({ name }: { name: string }) => ({ ok: true, name: name.trim().slice(0, 80) })),
+    },
     weave_is_attached: {
       description: "Check whether one path is inside a preset's context window.",
       inputSchema: { node: z.string().min(1), preset: presetArg },

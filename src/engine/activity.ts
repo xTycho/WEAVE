@@ -1,5 +1,5 @@
-import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from "node:fs";
-import type { ProjectPaths } from "../paths.js";
+import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, readSync, statSync, writeFileSync } from "node:fs";
+import { replaceFile, type ProjectPaths } from "../paths.js";
 import type { ActivityEvent, ThreadInfo } from "../types.js";
 
 const MAX_LOG = 512 * 1024;
@@ -13,7 +13,7 @@ export function appendEvent(paths: ProjectPaths, event: ActivityEvent): void {
       const keep = readFileSync(paths.activity, "utf8").trimEnd().split("\n").slice(-KEEP_LINES).join("\n") + "\n";
       const tmp = `${paths.activity}.${process.pid}.tmp`;
       writeFileSync(tmp, keep);
-      renameSync(tmp, paths.activity);
+      replaceFile(tmp, paths.activity);
     }
   } catch { /* another writer rotated first */ }
 }
@@ -91,7 +91,7 @@ export function writeThread(paths: ProjectPaths, id: string, patch: Partial<Thre
   mkdirSync(paths.weaveDir, { recursive: true });
   const tmp = `${paths.threads}.${process.pid}.tmp`;
   writeFileSync(tmp, JSON.stringify(kept, null, 2));
-  renameSync(tmp, paths.threads);
+  replaceFile(tmp, paths.threads);
   return t;
 }
 

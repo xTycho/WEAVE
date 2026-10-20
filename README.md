@@ -55,7 +55,15 @@ Settings are in the gear menu in the top bar. **Reattach files Claude asks for**
 
 **Freeze per thread** (on by default) works per thread, not per preset. A file a thread read or edited earlier, but not in its last 10 minutes or its last 2 messages, is frozen for that thread only. With each message the thread gets one short line, about 30 to 60 tokens, grouped by folder: "Frozen, skip unless needed: ...". Nothing is blocked or detached, presets are never edited, and a frozen file unfreezes the moment the thread reads or edits it again. Click a thread in the Context panel to frost its frozen files on the map; click it again to stop.
 
-**Context warnings** use the context size the map already reads from each thread's transcript. From 150k tokens the thread's row turns amber with "This thread is getting heavy, run /compact"; from 300k it turns red with "Start a fresh thread for the next task". Both thresholds can be changed in the gear menu. Like everything else here, these are fixed rules with no model involved.
+**Context warnings** use the context size the map already reads from each thread's transcript. From 50k tokens the thread's row turns amber with "This thread is getting heavy, start a new thread for the next task"; from 100k it turns red with "Start a new thread now". Both thresholds can be changed in the gear menu, and maps still on the old 150k / 300k defaults move to the new ones.
+
+**New-thread suggestion.** Past the amber warning, the thread's row suggests carrying on in a new thread and offers **Copy start line**. The line names the saved preset that best covers what the thread worked on, plus its counts and busiest folders, for example: `Continue with WEAVE preset "UI" [weave:ui]. Last thread: 12 files read, 4 edited in src/ui/src/, src/server/.` Paste it as the first message of a new thread and WEAVE moves that thread onto the preset and gives it the preset's note. The best preset is chosen by fixed rules: the files attached in it must hold at least 60% of the thread's own heat (reads plus twice its edits, halved every three days), and its attached tokens must stay under the amber warning; the highest share wins, then the fewest tokens. When no preset fits, it offers **Save and copy start line**, which saves the thread's warm files as a preset tagged UI, Docs, Tests or the main feature name.
+
+**Thread names** come from the thread's first prompt, or from its title: when Claude sets a thread title with a tool (`set_thread_label`, `set_session_title` or WEAVE's own `weave_name_thread`), the hook uses it. Double-click a thread's name in the Context panel to rename it. Presets with a thread working right now are pinned to the top of the panel and glow like a hot file.
+
+**History** rows open with the arrow into a small version of the Live tree: the route from the project through the feature folder to the file, with the thread and how long the action took. A PR row lists the files edited for it. When Claude reads or edits a detached file, History adds an **Asked** row (a request to reattach it), and **Woke** when it wakes an asleep file.
+
+Like everything else here, these are fixed rules with no model involved.
 
 ---
 
@@ -132,6 +140,7 @@ Restart Claude Desktop. The MCP server keeps a debounced watch on `.claude/conte
 | `weave_attach` / `weave_detach` | Adds or removes a feature or file (by id, path or label) |
 | `weave_create_preset` | Saves a new window, optionally as the default for new threads |
 | `weave_is_attached` | Checks whether one path is in the window |
+| `weave_name_thread` | Names this thread on the map; the hook reads the name from the call |
 
 **5. Start a feature from a design.** Select a design node (CSS, SVG or theme tokens) and click **New feature from this**. If you pick a saved preset under **Bring a saved preset**, everything in that preset joins the new feature, so its context comes along.
 

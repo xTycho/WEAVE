@@ -6,8 +6,8 @@
   <title>WEAVE Network Map</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='11' y='11' width='10' height='10' rx='3' fill='%23C3A5DD'/%3E%3Crect x='3' y='3' width='26' height='26' rx='8' fill='none' stroke='%23A3A9E6' stroke-width='2.5'/%3E%3C/svg%3E">
   <script>try { document.documentElement.dataset.theme = localStorage.getItem('weave.theme') || 'light'; } catch {}</script>
-  <script type="module" crossorigin src="./assets/index-CCFHaFqr.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-DUHRir6l.css">
+  <script type="module" crossorigin src="./assets/index-Bs17ZJnD.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-DAnChIZI.css">
 </head>
 <body>
 <div class="app">
@@ -22,7 +22,7 @@
         <div class="switch"><span><b class="lead">Reattach files Claude asks for</b><br><span class="note">Detaching always waits for you.</span></span><button id="auto" role="switch" aria-checked="false" aria-label="Reattach files Claude asks for"></button></div>
         <div class="switch"><span><b class="lead">Warm and cold context</b><br><span class="note">Fixed rules, no AI: reads and edits, halved every three days. Threads start with the warm files; cold files stay attached and are opened only when needed.</span></span><button id="warmCold" role="switch" aria-checked="true" aria-label="Warm and cold context"></button></div>
         <div class="switch"><span><b class="lead">Freeze per thread</b><br><span class="note">Fixed rules, no AI: files a thread used earlier but not in its last 10 minutes or 2 messages. Each message tells the thread to skip them unless needed. Nothing is blocked; a file unfreezes when used. Click a thread to see its frozen files.</span></span><button id="freeze" role="switch" aria-checked="true" aria-label="Freeze per thread"></button></div>
-        <div class="stack"><span><b class="lead">Context warnings</b><br><span class="note">A thread turns amber with "run /compact", then red with "start a fresh thread".</span></span>
+        <div class="stack"><span><b class="lead">Context warnings</b><br><span class="note">Fixed rules, no AI. A thread turns amber, then red, and WEAVE suggests a new thread with a start line for the saved preset that best fits its work.</span></span>
           <div class="nums"><label>Amber at <input id="heavyAt" type="number" min="10" max="2000" step="10" inputmode="numeric">k</label><label>Red at <input id="freshAt" type="number" min="10" max="2000" step="10" inputmode="numeric">k</label></div></div>
         <div class="stack"><span class="cap">When Claude asks for a detached file</span><div class="seg" id="gate"><button class="tab" data-v="flag" aria-pressed="true">Allow and flag</button><button class="tab" data-v="block" aria-pressed="false">Block</button></div></div>
         <div class="switch"><span><b class="lead">Follow system motion</b><br><span class="note" id="animNote">Pause signals and embers when your device asks apps to reduce motion.</span></span><button id="anim" role="switch" aria-checked="false" aria-label="Follow system motion"></button></div>

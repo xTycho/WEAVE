@@ -3,9 +3,10 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
-import { ActivityTail, readThreads, recentEvents, transcriptTokens } from "../engine/activity.js";
-import { heat, overdue, presetFromHeat, warmth } from "../engine/heat.js";
+import { ActivityTail, readThreads, recentEvents, transcriptTokens, writeThread } from "../engine/activity.js";
+import { heat, overdue, presetFromFiles, presetFromHeat, warmth } from "../engine/heat.js";
 import { frozen } from "../engine/freeze.js";
+import { handoff, startLine, threadWarm, type Handoff } from "../engine/handoff.js";
 import { contextLevel, suggestions } from "../engine/rules.js";
 import { countExact, removeKey, saveKey, tokenMode } from "../engine/tokens.js";
 import { attach, createPreset, deletePreset, detach, findNode, getPreset, sleep, spinUp, toggle, WeaveError } from "../engine/window.js";
@@ -77,8 +78,12 @@ export interface StatePayload {
   type: "state";
   project: string;
   map: Omit<ContextMap, "links" | "overrides" | "custom" | "dismissed">;
-  /** Each thread with its preset, its context level by fixed rules, and the node ids frozen for it (empty when freezing is off). */
-  threads: (ThreadInfo & { preset: string; context: ReturnType<typeof contextLevel>; frozen: string[] })[];
+  /**
+   * Each thread with its preset, its context level by fixed rules, the node ids
+   * frozen for it (empty when freezing is off) and, once it passes the amber
+   * warning, the new-thread suggestion.
+   */
+  threads: (ThreadInfo & { preset: string; context: ReturnType<typeof contextLevel>; frozen: string[]; next?: Handoff })[];
   suggestions: Record<string, Suggestion[]>;
   /** Preset id -> its warm files (hottest first), hot files and overdue files. Warm and hot are empty when warm and cold is off. */
   warm: Record<string, { warm: string[]; hot: string[]; overdue: string[] }>;
@@ -113,9 +118,12 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
     const threads = Object.values(readThreads(store.paths)).filter((t) => t.lastSeen > week).sort((a, b) => b.lastSeen - a.lastSeen).slice(0, 20)
       .map((t) => {
         const contextTokens = transcriptTokens(t.transcript);
+        const context = contextLevel(contextTokens, map.settings);
+        const next = context.level === "ok" ? undefined : handoff(map, events, t.id);
         return {
-          ...t, preset: map.assign[t.id] ?? map.settings.defaultPreset, contextTokens, context: contextLevel(contextTokens, map.settings),
+          ...t, preset: map.assign[t.id] ?? map.settings.defaultPreset, contextTokens, context,
           frozen: map.settings.freeze ? frozen(map, events, t.id, t.prompts).map((n) => n.id) : [],
+          ...(next ? { next } : {}),
         };
       });
     const { links: _l, overrides: _o, custom: _c, dismissed: _d, ...rest } = map;
@@ -159,10 +167,23 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
     "/api/presets/create": (b) => act(b, (m) => createPreset(m, s(b.name) ?? "New preset", undefined, s(b.copyFrom))),
     "/api/sleep": (b) => act(b, (m) => sleep(m, s(b.preset), Array.isArray(b.nodes) ? b.nodes.filter((x): x is string => typeof x === "string") : [])),
     "/api/presets/fromHeat": (b) => act(b, (m) => presetFromHeat(m, getPreset(m), events)),
+    "/api/presets/fromThread": (b) => act(b, (m) => {
+      const thread = s(b.thread) ?? "", warm = threadWarm(m, events, thread);
+      if (!warm.length) throw new WeaveError("This thread has no warm files to save.");
+      const preset = presetFromFiles(m, warm);
+      return { preset, line: startLine(preset, handoff(m, events, thread)!) };
+    }),
     "/api/presets/delete": (b) => act(b, (m) => deletePreset(m, s(b.id) ?? "")),
     "/api/presets/rename": (b) => act(b, (m) => { getPreset(m, s(b.id)).name = (s(b.name) ?? "").trim().slice(0, 60) || getPreset(m, s(b.id)).name; }),
     "/api/presets/default": (b) => act(b, (m) => { m.settings.defaultPreset = getPreset(m, s(b.id)).id; }),
     "/api/assign": (b) => act(b, (m) => { const t = s(b.thread); if (!t) throw new WeaveError("Missing thread."); m.assign[t] = getPreset(m, s(b.preset)).id; }),
+    "/api/threads/rename": (b) => {
+      const id = s(b.thread), name = (s(b.name) ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+      if (!id || !readThreads(store.paths)[id]) throw new WeaveError("Unknown thread.");
+      if (name) writeThread(store.paths, id, { name, named: true });
+      pushState();
+      return true;
+    },
     "/api/settings": (b) => act(b, (m) => {
       if (typeof b.autoApply === "boolean") m.settings.autoApply = b.autoApply;
       if (typeof b.warmCold === "boolean") m.settings.warmCold = b.warmCold;
@@ -236,7 +257,8 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
       broadcast({ type: "activity", events: fresh });
       pushState();
     }, 40));
-    watchers.push(watchProject(store.root, () => { store.rescan(); void count(); }));
+    // A failed rescan (say, the map is locked for longer than the retries) waits for the next change instead of stopping the server.
+    watchers.push(watchProject(store.root, () => { try { store.rescan(); } catch (err) { console.error(`[weave] rescan failed: ${(err as Error).message}`); } void count(); }));
     // Files freeze as time passes, without any event, so refresh open maps once a minute.
     const tick = setInterval(() => { if (clients.size) pushState(); }, 60_000);
     watchers.push({ close: () => clearInterval(tick) });

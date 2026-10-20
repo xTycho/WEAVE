@@ -58,6 +58,6 @@ export type ContextLevel = "ok" | "heavy" | "full";
 /** A fixed-rule word on a thread's context size: heavy from `heavyAt` tokens, full from `freshAt`. */
 export function contextLevel(tokens: number | undefined, settings: Pick<Settings, "heavyAt" | "freshAt">): { level: ContextLevel; text?: string } {
   if (!tokens || tokens < settings.heavyAt) return { level: "ok" };
-  if (tokens >= settings.freshAt) return { level: "full", text: "Start a fresh thread for the next task" };
-  return { level: "heavy", text: "This thread is getting heavy, run /compact" };
+  if (tokens >= settings.freshAt) return { level: "full", text: "Start a new thread now" };
+  return { level: "heavy", text: "This thread is getting heavy, start a new thread for the next task" };
 }
