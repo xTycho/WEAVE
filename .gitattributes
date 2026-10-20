@@ -1,0 +1,4 @@
+# The pre-built map is generated with LF endings. Keep its text files LF on every OS so a rebuild never shows as a change.
+src/ui/dist/**/*.js text eol=lf
+src/ui/dist/**/*.css text eol=lf
+src/ui/dist/*.html text eol=lf

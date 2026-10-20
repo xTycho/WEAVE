@@ -43,6 +43,8 @@ test("scanner builds three layers from real files, with shared elements and link
   assert.ok(links.some((l) => l.from === "test/format.test.ts" && l.to === "src/lib/format.ts" && l.why === "tests"));
   assert.deepEqual(by["tool:build:ui"].of, ["src/ui"]);
   assert.equal(nodes.some((n) => n.label.toLowerCase().includes("mock")), false);
+  write(root, ".gitignore", "CLAUDE.md\n");
+  assert.ok(scanProject(root).nodes[0].paths.includes("CLAUDE.md"), "an ignored CLAUDE.md stays in the core");
   rmSync(root, { recursive: true, force: true });
 });
 

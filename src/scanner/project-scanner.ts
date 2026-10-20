@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, join, posix } from "node:path";
 import type { Kind, Link, ScanResult, WeaveNode } from "../types.js";
 import { listFiles, type FileEntry } from "./files.js";
@@ -130,6 +130,11 @@ function projectName(root: string): string {
  */
 export function scanProject(root: string, tokens: TokenLookup = estimate): ScanResult {
   const files = listFiles(root);
+  // Instruction files belong in the core even when a project keeps them out of git.
+  for (const name of ["CLAUDE.md", "AGENTS.md"]) {
+    if (files.some((f) => f.path === name)) continue;
+    try { const st = statSync(join(root, name)); if (st.isFile()) files.push({ path: name, bytes: st.size, mtimeMs: st.mtimeMs }); } catch { /* none */ }
+  }
   const core = files.filter((f) => !f.path.includes("/") && CORE_FILES.test(f.path));
   const coreSet = new Set(core.map((f) => f.path));
   const rest = files.filter((f) => !coreSet.has(f.path));
