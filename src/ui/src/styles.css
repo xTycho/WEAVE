@@ -157,7 +157,7 @@ header::before { content: ""; position: absolute; inset: 0 0 auto; height: 3px; 
 .node.cold { opacity: .68; }
 .legend i.warm { background: var(--p-peach); box-shadow: 0 0 8px var(--p-peach); }
 .legend i.cold { background: var(--line-2); }
-.legend i.hot { background: linear-gradient(0deg, #F28B4B, #FFD27A); box-shadow: 0 0 8px #F6A35A; }
+.legend i.hot { background: linear-gradient(115deg, #FFD9A8, #F4A07A, #F1A9B0); box-shadow: 0 0 8px #F6A35A; }
 /* Hot: embers rise off the node's top edge. Paused with the rest of the motion under html.still. */
 .node.hot { border-color: #F6A35A; box-shadow: 0 0 0 1px #F6A35A, 0 0 22px -2px #F28B4B; }
 .node.hot.sel { box-shadow: 0 0 0 2px var(--fg), 0 0 22px -2px #F28B4B; }
@@ -228,7 +228,7 @@ html.still .embers { display: none; }
 .plist > li { min-width: 0; border: 1px solid transparent; border-radius: 12px; position: relative; }
 /* In use: a thread on this preset is working now. Pinned to the top with coals and embers, like a hot node. */
 .plist > li.inuse { border-color: #F6A35A; box-shadow: 0 0 0 1px #F6A35A, 0 0 22px -6px #F28B4B; isolation: isolate; }
-.plist > li.inuse > .skin { z-index: -1; }
+.plist > li.inuse > .skin { z-index: -1; opacity: .3; }
 .plist > li.inuse > .embers { z-index: 1; }
 .plist > li.cur { background: var(--surface); border-color: var(--line-2); }
 .plist .pick { width: 100%; min-width: 0; display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: start; gap: 10px; padding: 10px; border: 0; border-radius: 12px; background: transparent; cursor: pointer; text-align: left; color: inherit; }
@@ -403,17 +403,20 @@ button:disabled { opacity: .5; cursor: default; }
 
 /* Textures inside a node, under its text: the node's transform makes it a stacking context, so z-index -1 stays above its background. */
 .skin { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; pointer-events: none; z-index: -1; }
-/* Hot: a soft warmth rising from the bottom edge, breathing slowly. No pattern, just colour. */
-.skin-hot { background: radial-gradient(130% 85% at 50% 115%, rgba(246,163,90,.30), rgba(255,210,122,.10) 55%, transparent 80%); animation: warmth 4.5s ease-in-out infinite; }
-@keyframes warmth { 50% { opacity: .6; } }
-/* Frozen: files the selected thread moved on from. A cool wash from the top corner, a frosted inner edge, and a few specks drifting down. */
-.node.frozen { border-color: var(--frost); box-shadow: inset 0 0 0 1px rgba(255,255,255,.4), 0 0 14px -4px var(--frost); }
-.skin-frost { background: radial-gradient(110% 100% at 0% 0%, rgba(143,195,230,.38), transparent 60%), radial-gradient(90% 80% at 100% 100%, rgba(143,195,230,.16), transparent 70%), linear-gradient(180deg, rgba(255,255,255,.22), transparent 45%); }
-.skin-frost i { position: absolute; left: var(--x); top: var(--y); width: 3px; height: 3px; border-radius: 50%; background: var(--frost); opacity: 0;
-  animation: speck var(--t) linear var(--d) infinite; }
+/* Hot and frozen fill the node with a foil like the core's, in hot or very cold pastels, drifting slowly. The particles sit on top. */
+.skin-hot, .skin-frost { background-size: 260% 260%; animation: foil 10s ease-in-out infinite; }
+.skin-hot { background-image: linear-gradient(115deg, #FFD9A8 0%, #F6BE8A 20%, #F4A07A 38%, #F1A9B0 55%, #FFC98F 72%, #F7B26E 88%, #FFD9A8 100%); }
+.node.frozen { border-color: var(--frost); box-shadow: 0 0 14px -4px var(--frost); }
+.skin-frost { background-image: linear-gradient(115deg, #EEF8FF 0%, #CBE7F8 18%, #A9D3EF 36%, #D8EEFB 52%, #B7DCF4 70%, #E3F2FC 86%, #EEF8FF 100%); }
+/* Both fills are light, so the text on them stays dark in either theme, as on the core, and they never fade back like cold files. */
+.node.hot, .node.frozen { opacity: 1; }
+.node.hot, .node.frozen, .node.hot .cap, .node.frozen .cap, .node.hot .meta, .node.frozen .meta { color: #0A0B0D; }
+.node.hot .meta span, .node.frozen .meta span { color: rgba(10,11,13,.68); }
+.skin-frost i { position: absolute; left: var(--x); top: var(--y); width: 3px; height: 3px; border-radius: 50%; background: #fff; opacity: 0;
+  box-shadow: 0 0 4px rgba(255,255,255,.9); animation: speck var(--t) linear var(--d) infinite; }
 @keyframes speck {
   0% { transform: translateY(-8px); opacity: 0; }
-  25%, 70% { opacity: .55; }
+  25%, 70% { opacity: .9; }
   100% { transform: translateY(14px); opacity: 0; }
 }
 html.still .skin { animation: none; }
@@ -423,7 +426,7 @@ html.still .skin-frost i { display: none; }
 .world.dots .skin-frost i { display: none; }
 .editing.frost { border-color: var(--frost); }
 .editing.frost > i { background: var(--frost); border-radius: 50%; }
-.legend i.frost { background: var(--frost); box-shadow: 0 0 6px var(--frost); }
+.legend i.frost { background: linear-gradient(115deg, #EEF8FF, #A9D3EF, #D8EEFB); box-shadow: 0 0 6px var(--frost); }
 .heat.frozen { background: var(--frost-bg); color: var(--fg); box-shadow: inset 0 0 0 1px var(--frost); }
 /* Threshold inputs in the settings menu. */
 .nums { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12.5px; color: var(--dim); }
