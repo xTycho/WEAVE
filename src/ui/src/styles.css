@@ -149,7 +149,7 @@ header::before { content: ""; position: absolute; inset: 0 0 auto; height: 3px; 
 .world.dots .hull-label { font-size: calc(11px * var(--inv, 1)); }
 
 /* search + presets */
-.search { position: relative; flex: 1 1 260px; max-width: 440px; }
+.search { position: relative; flex: 1 1 260px; }
 .search input { width: 100%; height: 34px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--card); padding: 0 12px 0 34px; font: 400 14px var(--body); color: var(--fg); }
 .search input:focus { border-color: var(--fg); outline: none; }
 .search svg { position: absolute; left: 11px; top: 10px; width: 14px; height: 14px; stroke: var(--dim); fill: none; stroke-width: 1.75; stroke-linecap: round; }
