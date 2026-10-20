@@ -300,6 +300,9 @@ function renderAreas() {
 const ICON_END = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"/></svg>';
 /** Threads seen in the last day get a row; older ones fold under "older". */
 const RECENT = 864e5;
+/** A thread used in the last ACTIVE ms gets an Active tag and sorts to the top. */
+const MIN = 60_000, ACTIVE = 10 * MIN;
+const isActive = (t: Thread) => working(t.id) || Date.now() - t.lastSeen < ACTIVE;
 let showOld = false;
 /** The thread whose name is being typed; a live update must not wipe it. */
 let naming: string | null = null;
@@ -319,6 +322,7 @@ function threadRow(t: Thread): HTMLLIElement {
     + `<button class="tmain" title="${esc(tip)}">${esc(name)}</button>`
     + `<span class="tbar" title="${esc(size)}"><i></i><small>${tok ? fmt(tok).replace(/\.\dk$/, "k") : ""}</small></span>`
     + (LEVEL[m.level] ? `<span class="advice" title="${esc(m.text ?? "")}">${esc(LEVEL[m.level])}</span>` : "<span hidden></span>")
+    + (isActive(t) ? `<span class="active" title="Used in the last ${ACTIVE / MIN} minutes">Active</span>` : "<span hidden></span>")
     + `<button class="ibtn end" title="End thread: clear it from the map. Areas keep what it taught them." aria-label="End thread ${esc(name)}">${ICON_END}</button>`;
   const main = li.querySelector<HTMLButtonElement>(".tmain")!;
   main.addEventListener("dblclick", () => {
@@ -350,7 +354,7 @@ function renderThreads() {
   const box = $("tlist");
   box.innerHTML = "";
   const recent = (t: Thread) => working(t.id) || Date.now() - t.lastSeen < RECENT;
-  const list = S.threads.filter((t) => showOld || recent(t)).sort((x, y) => Number(working(y.id)) - Number(working(x.id)) || y.lastSeen - x.lastSeen);
+  const list = S.threads.filter((t) => showOld || recent(t)).sort((x, y) => Number(isActive(y)) - Number(isActive(x)) || y.lastSeen - x.lastSeen);
   list.forEach((t) => box.appendChild(threadRow(t)));
   const old = S.threads.filter((t) => !recent(t)).length;
   if (old) {
