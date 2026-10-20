@@ -1,77 +1,55 @@
-<p align="center"><img src="docs/layers.svg" alt="WEAVE's three layers: the core context, the features it routes to, and the files each feature holds" width="880"></p>
-
 # WEAVE
 
-**A live network map of your project's context.** WEAVE runs on your computer. It shows which files Claude can see, lets you choose what each thread loads, and lights up as Claude reads, edits, runs commands and opens PRs.
+**A map of your project that keeps Claude's threads small.** WEAVE runs on your computer and does two things:
 
-- **It maps your real files.** WEAVE scans the project and builds the map from what is actually there. Nothing is a placeholder.
-- **It uses no tokens to build or run.** The scanner, the rules and the map are plain code. Claude is never asked to do the mapping.
-- **It stays local.** The map server only listens on `127.0.0.1`. The single exception is optional exact token counting, which you have to turn on yourself (see [Token counts](#token-counts)).
+1. **It hands work to small subagents.** It splits the project into areas and writes one Claude Code subagent per area. A subagent works in its own context window and returns a short summary, so the thread that delegated stays small.
+2. **It tells you when to /compact or /clear.** A meter watches each thread's real token count and says so, in one line, when compacting or starting fresh would help.
+
+All of it is plain, fixed-rule code. No model builds the map, picks the areas or runs the meter, so it costs no tokens and the same activity always gives the same result. The map server only listens on `127.0.0.1`, and nothing leaves your machine.
 
 ---
 
-## How the map works
+## Why subagents
 
-The map has three layers:
+A file Claude reads stays in that thread's context until you /compact or /clear. Nothing can take it back out. So the real lever is where the reading happens: when a subagent reads ten files to fix the UI, only its summary lands in your thread.
+
+## Areas
+
+The scanner turns each top-level folder, and each sub-folder of `src/`, `lib/`, `packages/` or `apps/`, into a feature. Root files such as `CLAUDE.md`, `README` and `package.json` are the core that every thread sees.
+
+Areas grow from what your threads actually do:
+
+- With no history yet, every feature is its own area.
+- Two features join into one area when at least 2 threads worked in both, and those threads are at least half of the threads that worked in either.
+- Joins chain, so features that are always used together end up as one area.
+- An area lists its 8 most used files, so its subagent knows where to start.
+
+## Subagents
+
+WEAVE writes one file per area (the 8 busiest areas) to `.claude/agents/weave-<area>.md`. Each one has the area's folders, its most used files, and two rules: stay inside the area, and reply with a short summary of paths, findings and anything left open.
+
+Claude Code picks up changed agent files within seconds. WEAVE rewrites them when a thread starts, on `weave agents`, and from the map. It never touches an agent file it did not write.
+
+A new thread's first note lists the areas and their subagents, in about 100 to 200 tokens:
 
 ```
-your-project                     ← 1 · Core: CLAUDE.md, README, package.json. Every thread sees it.
-├── src/ui        (attached)     ← 2 · Features: top-level folders, workspaces, or src/<name>
-│   ├── App.tsx
-│   └── format.ts ◄──┐           ← 3 · Elements: the files. A file imported by two features
-├── src/api       (attached)  │       is shared and sits between them.
-│   ├── server.ts             │
-│   └── format.ts ────────────┘
-└── src/billing   (detached)     ← Detached: Claude skips it unless you ask
-    └── invoice.ts
+WEAVE map of your-project (~75.1k tokens). Areas and their subagents:
+- weave-src-ui: src/ui/ (~22.4k)
+- weave-src-engine-src-hooks: src/engine/, src/hooks/ (~11.8k)
+Hand a task that stays inside one area to its subagent: it works in its own context and returns a summary, so this thread stays small. Do quick lookups and cross-area edits here.
 ```
 
-- **Full project** is the default view: every file attached. Threads without a preset use it, and the map never detaches anything from it (sleeping overdue files is the one exception, and only when you click).
-- **Presets** are saved context windows: the features a thread loads, minus any files you detached. **Save warm files as preset** makes one from the files that are warm right now and names it by fixed rules: mostly UI or design files becomes "UI", mostly docs "Docs", mostly tests "Tests", otherwise the main folder. While a preset is selected, an **Editing** label on the map reminds you that clicking cords changes it.
-- **Threads** are your Claude Code sessions. Each one runs on a preset, and several threads can share one. In the **Context** panel on the right, every thread sits under its preset with an orb showing what it is doing; use its dropdown to move it to another preset.
-- **Cords** connect the layers. Click a cord, or use Detach in the node panel, to take something out of the window. Click it again to bring it back.
+## The meter
 
-### What you see live
+The meter reads each thread's context size from the usage numbers Claude Code writes to its transcript. It measures against your window size (200k by default, or 1M), which you set once in the map. A thread hears at most one line per message:
 
-| Claude does | On the map |
+| Line | When |
 |---|---|
-| Reads a file | A pulse flows **in** from the file to the core. Its size and label show the tokens it adds. |
-| Edits a file | A pulse flows **out** from the core to the file. |
-| Runs a command | A pulse goes out to the tool (`npm run test`, Shell, Git) and the output comes back. |
-| Opens a PR | Every file the thread edited sends its change to the core, then one bundle goes to Git. |
+| **Hand off** to `weave-<area>` | From 40% of the window, when this message's files all sit in one area with a subagent. Claude can act on this one itself. |
+| **/compact** | From 80% of the window. Earlier, from 60%, when at least a quarter of the thread is files it has moved on from (files it last used before its last 3 messages). |
+| **/clear** | A message's first few file actions touch at least two files, all in folders the thread never used before, and the thread already holds 20% of the window. The line carries over the earlier task, the files it edited and how many files are uncommitted. |
 
-While Claude works on a node, a tag on it expands in the preset's colour, with a small animated orb, the action and the elapsed seconds. The three most-used files give off embers. Zoom out and the cards collapse into labelled boxes, like a graph view.
-
-### Suggestions are fixed rules, not AI
-
-- **Asked while detached:** Claude read or edited a file that is detached from its thread's window.
-- **Linked file:** a detached file tests, or is imported by, a file that was just edited.
-- **Unused:** an attached file nobody touched in the last 10 actions. Only while warm and cold is off; with it on, such files are simply cold.
-- **Overdue:** attached files with no read or edit in 14 days. **Put to sleep** (per file, or all at once) detaches them and leaves them out of the thread note. A sleeping file wakes, reattached, the moment Claude reads or edits it, whatever the other settings say. Nothing is ever put to sleep without your click.
-
-Settings are in the gear menu in the top bar. **Reattach files Claude asks for** only ever reattaches; detaching always waits for you. The meter next to it is one bar for the whole project: warm, cold, overdue and detached, with the numbers on hover. Click the overdue count to highlight those files on the map.
-
-**Warm and cold context** (on by default) ranks attached files by how much threads use them. A file's heat is its reads plus twice its edits, halved every three days. The hottest files (up to 12) are warm: a new thread's note lists them under "Warm, start here", and the map gives them a glow. Every other attached file is cold: still attached and never blocked, but the note tells Claude to open it only when the task needs it, and the map fades it back. The top three warm files with a heat of 10 or more are hot and give off embers. It is plain arithmetic over the activity log, with no model involved, so the same activity always gives the same result. Nothing is detached and presets are never edited, so a cold file that gets used simply warms up again. Until something has been used, the note stays as it was. When Claude asks for a detached file you choose between **Allow and flag** (the default: it works, and the map marks it) and **Block** (Claude Code is told the file is detached and should ask you).
-
-**Freeze per thread** (on by default) works per thread, not per preset. A file a thread read or edited earlier, but not in its last 10 minutes or its last 2 messages, is frozen for that thread only. With each message the thread gets one short line, about 30 to 60 tokens, grouped by folder: "Frozen, skip unless needed: ...". Nothing is blocked or detached, presets are never edited, and a frozen file unfreezes the moment the thread reads or edits it again. Click a thread in the Context panel to frost its frozen files on the map; click it again to stop.
-
-**Context warnings** use the context size the map already reads from each thread's transcript. Each thread row has a small bar that fills toward the red limit: amber from 50k tokens, red from 100k. The numbers and the reason are in the row's tooltip. Both thresholds can be changed in the gear menu, and maps still on the old 150k / 300k defaults move to the new ones.
-
-**New-thread suggestion.** A thread that is working past the amber warning gets a small button in its row that copies a start line. The line names the saved preset that best covers what the thread worked on, plus its counts and busiest folders, for example: `Continue with WEAVE preset "Amethyst · UI" [weave:amethyst-ui]. Last thread: 12 files read, 4 edited in src/ui/src/, src/server/.` Paste it as the first message of a new thread and WEAVE moves that thread onto the preset and gives it the preset's note. The best preset is chosen by fixed rules: the files attached in it must hold at least 60% of the thread's own heat (reads plus twice its edits, halved every three days), and its attached tokens must stay under the amber warning; the highest share wins, then the fewest tokens. When no preset fits, the button saves the thread's warm files as a preset, then copies the line.
-
-**Preset names.** Saved presets take the first unused name from a fixed list of 25 crystals (Amethyst, Quartz, Obsidian, Opal, Onyx, Jade, Topaz and so on), followed by a tag for what they hold: UI, Docs, Tests or the main feature name, as in "Amethyst · UI". Rename any preset in the map.
-
-**Why a new thread.** A file Claude has read stays in that thread's context until it compacts, so detaching it later saves nothing in the same thread. Presets pay off when a thread starts. That is what the start line is for.
-
-**Auto-calibrate** (on by default) does this without the map. The first time a thread passes amber, and again at red, the prompt hook adds one line to that thread, about 40 tokens: `WEAVE: 52k tokens, past amber (50k). In one line, ask the user (or the session that started this thread) to start a new thread with:` and the start line. When no preset fits it saves one from the thread's warm files first; an auto-saved preset is refreshed, not duplicated, the next time. After a /compact brings the thread back under amber, the next crossing is told again.
-
-**Thread names** come from the thread's first prompt, or from its title: when Claude sets a thread title with a tool (`set_thread_label`, `set_session_title` or WEAVE's own `weave_name_thread`), the hook uses it. Double-click a thread's name in the Context panel to rename it. Presets with a thread working right now are pinned to the top of the panel and pulse like a hot file. Threads idle for more than a day fold under "Show older threads". **End thread** (the cross on a thread row) and **Clear** (next to the older threads) take threads off the map. The presets keep what those threads taught them, so the next thread starts from a preset instead; a cleared thread that acts again simply comes back.
-
-**Hot and frozen on the map.** A hot file pulses and gives off embers in warm colours. A frozen file has a ring that closes in on it, with frost specks drifting into its core. Both pause when your device asks apps to reduce motion.
-
-**History** rows open with the arrow into a small version of the Live tree: the route from the project through the feature folder to the file, with the thread and how long the action took. A PR row lists the files edited for it. When Claude reads or edits a detached file, History adds an **Asked** row (a request to reattach it), and **Woke** when it wakes an asleep file.
-
-Like everything else here, these are fixed rules with no model involved.
+Only you can run /compact and /clear, so the line asks Claude to tell you. A subagent's own reads are left out, since they never reached the thread. The 60% threshold and the window size are in the gear menu, and the meter can be switched off there.
 
 ---
 
@@ -82,112 +60,52 @@ Requires Node.js 18.17 or newer.
 ```bash
 npm install -g github:xTycho/WEAVE      # gives you the `weave` command
 cd /path/to/your-project
-weave init                              # scan, write the map, register MCP and hooks
+weave init                              # scan, write the map and subagents, register MCP and hooks
 weave ui                                # open http://127.0.0.1:3000
 ```
 
-`weave init` does five things in your project, and you can run it again at any time:
+`weave init` does five things, and you can run it again at any time (it also upgrades a WEAVE 1 install):
 
-1. It adds a short WEAVE section to `CLAUDE.md`. It only appends, and it never overwrites your text.
-2. It scans the project into `.claude/context-map.json`.
+1. It adds a short WEAVE section to `CLAUDE.md`, or replaces an older WEAVE section. The rest of the file is never touched.
+2. It scans the project into `.claude/context-map.json` and writes the subagents.
 3. It registers the `weave` MCP server in `.mcp.json`, using absolute paths.
-4. It adds activity hooks to `.claude/settings.local.json`, which is your local, uncommitted settings file. Skip this with `--no-hooks`.
+4. It adds hooks to `.claude/settings.local.json` (local, uncommitted) for SessionStart, UserPromptSubmit, and PostToolUse on file, shell and title tools only. Skip this with `--no-hooks`.
 5. It adds WEAVE's local state to `.gitignore`.
 
 Restart Claude Code afterwards so it loads the tools and hooks.
 
-## Claude Desktop (global config)
+## The map
 
-Claude Desktop reads its MCP servers from one global file:
+`weave ui` opens a live map of the project: the core in the middle, folders around it, files on the outside. Reads flow in to the core, edits flow out, commands go out and back, and a PR gathers the edited files. The side panel lists:
 
-| OS | Config file |
-|---|---|
-| macOS | `~/Library/Application Support/Claude/claude_desktop_config.json` |
-| Windows | `%APPDATA%\Claude\claude_desktop_config.json` |
-| Linux | `~/.config/Claude/claude_desktop_config.json` |
+- **Areas and subagents.** Click an area to highlight it on the map. **Rewrite subagents** and **Rescan** are below the list.
+- **Threads**, each with a bar for how full its window is and the meter's advice. Double-click a name to rename it. The cross ends a thread on the map; its activity stays, so the areas keep what it taught them.
+- **Live** and **History**, with what threads are touching right now and lately.
 
-Let WEAVE write the entry for you. It uses absolute paths, so the location Desktop starts from does not matter:
+## MCP tools
 
-```bash
-cd /path/to/your-project
-weave desktop            # print the entry
-weave desktop --write    # merge it into the config file
-```
-
-The entry looks like this (your paths will differ):
-
-```json
-{
-  "mcpServers": {
-    "weave": {
-      "command": "/usr/local/bin/node",
-      "args": ["/usr/local/lib/node_modules/weave/bin/weave.js", "mcp", "--dir", "/Users/you/code/your-project"]
-    }
-  }
-}
-```
-
-Restart Claude Desktop. The MCP server keeps a debounced watch on `.claude/context-map.json`. When you toggle something in the map, the server picks it up straight away and tells Desktop that the context changed, so you don't need to restart.
-
----
-
-## Tutorial: automatic mapping and token efficiency
-
-**1. Let the scanner do the first pass.** Run `weave init` and open the map. Root files become the core. Each top-level folder becomes a feature, and so does each sub-folder of `src/`, `lib/`, `packages/` or `apps/`. Files become elements. Imports, including tsconfig `paths` aliases and workspace packages, mark which files are shared between features. Tests are linked to the code they import. Package scripts become tool nodes. Big features fold their sub-folders into one node each, so the map stays readable.
-
-**2. Make a preset per kind of task.** Work for a while, then click **Save warm files as preset**, or select a preset and click **Duplicate**. Then detach the features that task doesn't need by clicking their cords. The meter at the top shows how many tokens the window holds.
-
-**3. Point each thread at a preset.** In the Context panel, use the dropdown next to each thread. When a new thread starts, Claude Code receives a short note naming its window: core files, attached folders, and detached files to skip. The note costs about 100 to 200 tokens however big the project is, because it lists folders, not file contents.
-
-**4. Let Claude adjust the window.** Claude can call these MCP tools, and each one returns paths and ids, never file contents:
+Every tool returns paths and names, never file contents.
 
 | Tool | What it does |
 |---|---|
-| `weave_get_context` | Lists the window: core files, attached folders, detached files |
-| `weave_map` | Lists features and presets with their token cost |
-| `weave_attach` / `weave_detach` | Adds or removes a feature or file (by id, path or label) |
-| `weave_create_preset` | Saves a new window, optionally as the default for new threads |
-| `weave_is_attached` | Checks whether one path is in the window |
+| `weave_map` | Lists the areas: folders, most used files, tokens and subagent |
+| `weave_area_for` | Says which area a path is in, and its subagent |
 | `weave_name_thread` | Names this thread on the map; the hook reads the name from the call |
 
-**5. Start a feature from a design.** Select a design node (CSS, SVG or theme tokens) and click **New feature from this**. If you pick a saved preset under **Bring a saved preset**, everything in that preset joins the new feature, so its context comes along.
+## Claude Desktop
 
-### Structuring a project for fewer tokens
-
-- **Keep `CLAUDE.md` short.** It is in every thread. Put area-specific notes in that area's folder, so they load only when the feature is attached.
-- **One concern per folder.** WEAVE makes features from folders, so a clear folder layout gives you clean presets.
-- **Watch the shared nodes.** A file shared by many features is pulled into all of them. Splitting a big shared file often saves more than detaching a feature.
-- **Detach generated and vendored code** you never want Claude to read.
-- **Put overdue files to sleep.** They cost nothing in the note and wake by themselves when needed.
-
-### Where the savings come from
-
-The note WEAVE adds to a thread is small, about 100 to 200 tokens. The saving comes from Claude reading fewer files: it starts out knowing which folders matter and which to skip, so it searches and opens less. How much that saves depends on the project and the task.
-
----
-
-## Token counts
-
-By default every count is an **estimate**: the file's size divided by 4. It runs fully offline.
-
-For **exact** counts, add an Anthropic API key, either in the map under Settings, **Exact token counts** or with `weave key set`, which hides what you type. You can also set `ANTHROPIC_API_KEY` in the environment. How the key is handled:
-
-- It is stored in a private file in your user config folder: `~/.config/weave/` on Linux and macOS, `%APPDATA%\weave\` on Windows. The file is readable only by you. The key is never stored in the project, the map file or git.
-- The map can save or remove the key, but it can never read it back. Claude never sees it.
-- Counting sends each file's text, with the key, to Anthropic's free `count_tokens` endpoint. Nothing else is sent anywhere. Each file is counted once and counted again only when it changes.
-
-Run `weave key remove` to go back to estimates.
+`weave desktop` prints the MCP entry for Claude Desktop's global config, and `weave desktop --write` merges it in. It uses absolute paths, so the location Desktop starts from does not matter. Restart Desktop afterwards.
 
 ## Commands
 
 ```
-weave init [--no-hooks]     scan, write the map, register MCP and hooks
+weave init [--no-hooks]     scan, write the map and subagents, register MCP and hooks
 weave ui [--port 3000]      open the map (walks to the next port if 3000 is taken)
 weave mcp                   MCP server over stdio (Claude Code and Claude Desktop)
 weave desktop [--write]     Claude Desktop config with absolute paths
 weave scan                  rescan now (the map also rescans when files change)
-weave status [--preset id]  print the note a new thread receives
-weave key set|remove        optional exact token counting
+weave agents                rewrite the subagents from the current areas
+weave status                print the note a new thread receives
 ```
 
 Every command takes `--dir <path>` to point at a project other than the current folder.
@@ -196,26 +114,26 @@ Every command takes `--dir <path>` to point at a project other than the current 
 
 | Path | What it holds | In git? |
 |---|---|---|
-| `.claude/context-map.json` | Scanned nodes, presets, thread assignments, settings | No |
-| `.claude/weave/activity.jsonl` | What threads did (tool, file, time); rotates at 512 KB | No |
-| `.claude/weave/threads.json` | Thread names and transcript paths | No |
-| `.claude/weave/token-cache.json` | Exact counts per file, when a key is set | No |
-| `.claude/settings.local.json` | The activity hooks | No |
+| `.claude/context-map.json` | Scanned nodes and links, and the meter settings. A broken file is kept as `.bak` before it is rebuilt. | No |
+| `.claude/agents/weave-*.md` | One subagent per area | No |
+| `.claude/weave/activity.jsonl` | Which files threads touched, and when; rotates at 512 KB | No |
+| `.claude/weave/threads.json` | Thread names, transcript paths and recent message times | No |
+| `.claude/settings.local.json` | The hooks | No |
+
+Token counts are estimates (file size ÷ 4), made offline.
 
 ## Project layout
 
 ```
 bin/weave.js            CLI
 src/scanner/            file listing, import parsing, the three-layer scan
-src/engine/             context windows, rules, activity log, token counts
+src/engine/             areas, subagent files, the meter, the activity log
 src/store.ts            reads and writes the map file (atomic, never throws on read)
 src/server/             local HTTP + WebSocket server for the map
 src/mcp/                MCP server and tools
 src/hooks/              Claude Code hook handler
 src/ui/                 the map (Vite); src/ui/dist is committed so it works without a build
 ```
-
-The routing layer in `src/engine/window.ts` decides what is in a window from the map file alone. It never edits your project files, and it never edits `CLAUDE.md` after `init`.
 
 ## Development
 
@@ -225,6 +143,8 @@ npm run build      # server (tsc) and map (vite)
 npm test
 npm run dev:ui     # map with hot reload; run `weave ui` alongside it for the API
 ```
+
+WEAVE 1, with presets, warm and cold heat, freezing and start lines, is kept at the `v1-legacy` tag.
 
 ## License
 

@@ -18,8 +18,8 @@ const DESIGN = /\.(css|scss|sass|less|styl|pcss|svg|fig|sketch)$|(^|\/)tailwind\
 const CODE = /\.(m|c)?(j|t)sx?$|\.(py|go|rs|java|kt|kts|swift|rb|php|cs|fs|c|h|cc|cpp|hpp|m|mm|scala|clj|ex|exs|erl|hs|lua|dart|r|jl|sh|bash|zsh|ps1|sql|vue|svelte|astro|html?|graphql|gql|proto|tf|zig|nim|sol)$/i;
 const DOC = /\.(md|mdx|txt|rst|adoc)$/i;
 
-export type TokenLookup = (file: FileEntry) => { tokens: number; exact: boolean };
-export const estimate: TokenLookup = ({ bytes }) => ({ tokens: Math.round(bytes / 4), exact: false });
+export type TokenLookup = (file: FileEntry) => number;
+export const estimate: TokenLookup = ({ bytes }) => Math.round(bytes / 4);
 
 export function kindOf(path: string): Kind {
   if (TEST.test(path)) return "test";
@@ -57,14 +57,13 @@ function majority(kinds: Kind[]): Kind {
 function elementsFor(feature: string, files: FileEntry[], tokens: TokenLookup): { nodes: WeaveNode[]; owner: Map<string, string> } {
   const owner = new Map<string, string>();
   const fileNode = (f: FileEntry): WeaveNode => {
-    const t = tokens(f);
     owner.set(f.path, f.path);
-    return { id: f.path, label: basename(f.path), tier: "element", kind: kindOf(f.path), paths: [f.path], of: [feature], bytes: f.bytes, tokens: t.tokens, exact: t.exact };
+    return { id: f.path, label: basename(f.path), tier: "element", kind: kindOf(f.path), paths: [f.path], of: [feature], bytes: f.bytes, tokens: tokens(f) };
   };
   const group = (id: string, label: string, paths: string[], members: FileEntry[]): WeaveNode => {
-    let tok = 0, exact = true;
-    for (const f of members) { const t = tokens(f); tok += t.tokens; exact &&= t.exact; owner.set(f.path, id); }
-    return { id, label, tier: "element", kind: majority(members.map((f) => kindOf(f.path))), paths, of: [feature], bytes: members.reduce((s, f) => s + f.bytes, 0), tokens: tok, exact };
+    let tok = 0;
+    for (const f of members) { tok += tokens(f); owner.set(f.path, id); }
+    return { id, label, tier: "element", kind: majority(members.map((f) => kindOf(f.path))), paths, of: [feature], bytes: members.reduce((s, f) => s + f.bytes, 0), tokens: tok };
   };
   if (files.length <= MAX_ELEMENTS) return { nodes: files.map(fileNode), owner };
 
@@ -148,11 +147,11 @@ export function scanProject(root: string, tokens: TokenLookup = estimate): ScanR
   }
   const featureIds = [...byFeature.keys()].sort((a, b) => (a === ROOT_FEATURE ? 1 : b === ROOT_FEATURE ? -1 : a.localeCompare(b)));
 
-  let coreTokens = 0, coreExact = true;
-  for (const f of core) { const t = tokens(f); coreTokens += t.tokens; coreExact &&= t.exact; }
+  let coreTokens = 0;
+  for (const f of core) coreTokens += tokens(f);
   const nodes: WeaveNode[] = [{
     id: "core", label: projectName(root), tier: "core", kind: "core", paths: core.map((f) => f.path), of: [],
-    bytes: core.reduce((s, f) => s + f.bytes, 0), tokens: coreTokens, exact: coreExact,
+    bytes: core.reduce((s, f) => s + f.bytes, 0), tokens: coreTokens,
   }];
   const owner = new Map<string, string>(core.map((f) => [f.path, "core"]));
   const elements: WeaveNode[] = [];

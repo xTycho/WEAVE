@@ -32,3 +32,4 @@ CLAUDE.md
 .claude/
 .claude/weave/
 .claude/settings.local.json
+.claude/agents/weave-*.md

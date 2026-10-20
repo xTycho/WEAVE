@@ -1,10 +1,8 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { projectPaths, replaceFile, type ProjectPaths } from "./paths.js";
-import { scanProject, type TokenLookup } from "./scanner/project-scanner.js";
-import { tokenLookup } from "./engine/tokens.js";
-import { PALETTE } from "./engine/window.js";
-import type { ContextMap, Kind, Override, Preset, ScanResult, Settings, WeaveNode } from "./types.js";
+import { scanProject } from "./scanner/project-scanner.js";
+import type { ContextMap, Kind, ScanResult, Settings, WeaveNode } from "./types.js";
 
 export interface LoadedMap {
   map: ContextMap;
@@ -13,13 +11,13 @@ export interface LoadedMap {
 }
 
 const KINDS: Kind[] = ["core", "feature", "code", "design", "doc", "test", "tool"];
-const DEFAULT_SETTINGS: Settings = { autoApply: false, warmCold: true, freeze: true, autoCalibrate: true, heavyAt: 50_000, freshAt: 100_000, gate: "flag", idleAfter: 10, defaultPreset: "full" };
+export const DEFAULT_SETTINGS: Settings = { window: 200_000, compactAt: 0.6, meter: true };
 
-/** Context thresholds stay between 10k and 2M tokens, and fresh is never below heavy. */
-export function thresholds(heavy: unknown, fresh: unknown): { heavyAt: number; freshAt: number } {
-  const clamp = (v: unknown, d: number) => Math.min(2_000_000, Math.max(10_000, Math.round(Number(v)) || d));
-  const heavyAt = clamp(heavy, DEFAULT_SETTINGS.heavyAt);
-  return { heavyAt, freshAt: Math.max(heavyAt, clamp(fresh, DEFAULT_SETTINGS.freshAt)) };
+/** The window stays between 50k and 2M tokens; compact sits between 30% and 95% of it. */
+export function settingsFrom(raw: Record<string, unknown>): Settings {
+  const window = Math.min(2_000_000, Math.max(50_000, Math.round(Number(raw.window)) || DEFAULT_SETTINGS.window));
+  const at = Number(raw.compactAt);
+  return { window, compactAt: Number.isFinite(at) && at > 0 ? Math.min(0.95, Math.max(0.3, at)) : DEFAULT_SETTINGS.compactAt, meter: raw.meter !== false };
 }
 
 const str = (v: unknown, d = "") => (typeof v === "string" ? v : d);
@@ -33,95 +31,38 @@ function node(raw: unknown): WeaveNode | undefined {
   return {
     id: n.id, label: str(n.label, n.id), tier, kind: KINDS.includes(n.kind as Kind) ? (n.kind as Kind) : tier === "feature" ? "feature" : "code",
     paths: strs(n.paths), of: strs(n.of), bytes: Number(n.bytes) || 0, tokens: Number(n.tokens) || 0,
-    ...(n.exact ? { exact: true } : {}), ...(n.custom ? { custom: true } : {}), ...(typeof n.command === "string" ? { command: n.command } : {}),
+    ...(typeof n.command === "string" ? { command: n.command } : {}),
   };
 }
 
-function preset(raw: unknown, i: number): Preset | undefined {
-  const p = obj(raw);
-  if (typeof p.id !== "string") return undefined;
-  const changed = obj(p.changedAt);
-  return {
-    id: p.id, name: str(p.name, p.id), color: str(p.color, PALETTE[i % PALETTE.length]),
-    features: strs(p.features), detached: strs(p.detached), asleep: strs(p.asleep), ...(p.auto === true ? { auto: true } : {}), ...(typeof p.tag === "string" ? { tag: p.tag } : {}),
-    changedAt: Object.fromEntries(Object.entries(changed).filter(([, v]) => typeof v === "number")) as Record<string, number>,
-  };
-}
-
-/** Turns untrusted JSON into a valid map, dropping anything malformed. */
+/** Turns untrusted JSON into a valid map, dropping anything malformed. Maps from WEAVE 1 keep their nodes; presets and the rest are left behind. */
 export function normalizeMap(raw: unknown): ContextMap {
   const m = obj(raw);
-  const s = obj(m.settings);
-  const nodes = (Array.isArray(m.nodes) ? m.nodes : []).map(node).filter((n): n is WeaveNode => !!n);
-  const presets = (Array.isArray(m.presets) ? m.presets : []).map(preset).filter((p): p is Preset => !!p);
-  const overrides: Record<string, Override> = {};
-  for (const [id, o] of Object.entries(obj(m.overrides))) {
-    const v = obj(o);
-    overrides[id] = {
-      ...(typeof v.label === "string" ? { label: v.label } : {}),
-      ...(KINDS.includes(v.kind as Kind) ? { kind: v.kind as Kind } : {}),
-      ...(Array.isArray(v.addOf) ? { addOf: strs(v.addOf) } : {}),
-    };
-  }
   return {
-    version: 2,
+    version: 3,
     scannedAt: typeof m.scannedAt === "string" ? m.scannedAt : undefined,
-    nodes,
+    nodes: (Array.isArray(m.nodes) ? m.nodes : []).map(node).filter((n): n is WeaveNode => !!n),
     links: (Array.isArray(m.links) ? m.links : []).map(obj)
       .filter((l) => typeof l.from === "string" && typeof l.to === "string" && (l.why === "tests" || l.why === "is imported by"))
       .map((l) => ({ from: l.from as string, to: l.to as string, why: l.why as "tests" | "is imported by" })),
-    presets,
-    assign: Object.fromEntries(Object.entries(obj(m.assign)).filter(([, v]) => typeof v === "string")) as Record<string, string>,
-    overrides,
-    custom: (Array.isArray(m.custom) ? m.custom : []).map(node).filter((n): n is WeaveNode => !!n),
-    dismissed: strs(m.dismissed),
-    settings: {
-      autoApply: s.autoApply === true,
-      warmCold: s.warmCold !== false,
-      freeze: s.freeze !== false,
-      autoCalibrate: s.autoCalibrate !== false,
-      // Maps saved with the old 150k / 300k defaults move to the new ones; any other choice is kept.
-      ...(s.heavyAt === 150_000 && s.freshAt === 300_000 ? thresholds(undefined, undefined) : thresholds(s.heavyAt, s.freshAt)),
-      gate: s.gate === "block" ? "block" : "flag",
-      idleAfter: Math.min(500, Math.max(3, Number(s.idleAfter) || DEFAULT_SETTINGS.idleAfter)),
-      defaultPreset: str(s.defaultPreset, presets[0]?.id ?? DEFAULT_SETTINGS.defaultPreset),
-    },
+    settings: settingsFrom(obj(m.settings)),
     updatedAt: typeof m.updatedAt === "string" ? m.updatedAt : undefined,
   };
 }
 
 function emptyMap(): ContextMap {
-  return { version: 2, nodes: [], links: [], presets: [], assign: {}, overrides: {}, custom: [], dismissed: [], settings: { ...DEFAULT_SETTINGS } };
+  return { version: 3, nodes: [], links: [], settings: { ...DEFAULT_SETTINGS } };
 }
 
-/**
- * Lays a fresh scan over the stored map. The user's presets, overrides and
- * custom nodes survive; scanned nodes and links are replaced.
- */
+/** Lays a fresh scan over the stored map: nodes and links are replaced, settings stay. */
 export function mergeScan(map: ContextMap, scan: ScanResult): ContextMap {
-  const prevFeatures = new Set(map.nodes.filter((n) => n.tier === "feature" && !n.custom).map((n) => n.id));
-  const nodes = [...scan.nodes.map((n) => ({ ...n, of: [...n.of] })), ...map.custom.map((n) => ({ ...n }))];
-  for (const n of nodes) {
-    const o = map.overrides[n.id];
-    if (!o) continue;
-    if (o.label) n.label = o.label;
-    if (o.kind) n.kind = o.kind;
-    for (const f of o.addOf ?? []) if (!n.of.includes(f)) n.of.push(f);
-  }
-  const features = nodes.filter((n) => n.tier === "feature").map((n) => n.id);
-  const fresh = features.filter((f) => !prevFeatures.has(f));
-  const presets = map.presets.length ? map.presets : [{ id: "full", name: "Full project", color: PALETTE[0], features: [], detached: [], changedAt: {} }];
-  for (const p of presets) {
-    // A preset that held every feature keeps holding every feature as the project grows.
-    const hadAll = prevFeatures.size === 0 || [...prevFeatures].every((f) => p.features.includes(f));
-    if (hadAll) p.features.push(...fresh.filter((f) => !p.features.includes(f)));
-  }
-  return { ...map, nodes, links: scan.links, presets, scannedAt: new Date().toISOString() };
+  return { ...map, nodes: scan.nodes, links: scan.links, scannedAt: new Date().toISOString() };
 }
 
 /**
  * File-backed store for `.claude/context-map.json`. Reads never throw: a
- * missing or broken map falls back to a fresh scan of the project.
+ * missing or broken map falls back to a fresh scan of the project, and a
+ * broken one is copied to `context-map.json.bak` first so nothing is lost.
  */
 export class ContextStore {
   readonly paths: ProjectPaths;
@@ -133,24 +74,24 @@ export class ContextStore {
   get root(): string { return this.paths.root; }
   get mapPath(): string { return this.paths.map; }
 
-  scan(tokens: TokenLookup = tokenLookup(this.root)): ScanResult {
-    return scanProject(this.root, tokens);
+  scan(): ScanResult {
+    return scanProject(this.root);
   }
 
   /** Reads the stored map. With `scanIfMissing` false (hooks), a missing map stays empty instead of scanning. */
   load(scanIfMissing = true): LoadedMap {
     let text: string | undefined;
     try { text = readFileSync(this.paths.map, "utf8"); } catch { /* missing */ }
-    if (text !== undefined) {
-      try {
-        const map = normalizeMap(JSON.parse(text));
-        if (map.nodes.length && map.presets.length) return { map, source: "file" };
-      } catch (err) {
-        const warning = `context-map.json unreadable (${(err as Error).message}); rebuilt from a scan`;
-        return { map: scanIfMissing ? mergeScan(emptyMap(), this.scan()) : emptyMap(), source: "scan", warning };
-      }
+    const fresh = () => (scanIfMissing ? mergeScan(emptyMap(), this.scan()) : emptyMap());
+    if (text === undefined) return { map: fresh(), source: "scan", warning: "context-map.json missing; built from a scan" };
+    try {
+      const map = normalizeMap(JSON.parse(text));
+      if (map.nodes.length) return { map, source: "file" };
+      return { map: scanIfMissing ? mergeScan(map, this.scan()) : map, source: "scan" };
+    } catch (err) {
+      if (scanIfMissing) try { copyFileSync(this.paths.map, `${this.paths.map}.bak`); } catch { /* keep going */ }
+      return { map: fresh(), source: "scan", warning: `context-map.json unreadable (${(err as Error).message}); rebuilt from a scan, old file kept as context-map.json.bak` };
     }
-    return { map: scanIfMissing ? mergeScan(emptyMap(), this.scan()) : emptyMap(), source: "scan", ...(text === undefined ? { warning: "context-map.json missing; built from a scan" } : {}) };
   }
 
   /** Atomic write (tmp file + rename) so watchers never see half a file. */

@@ -1,7 +1,7 @@
 {
   "name": "weave",
-  "version": "0.2.0",
-  "description": "A local, live network map of your project's context for Claude Code and Claude Desktop: automatic scanning, per-thread context windows and an MCP server.",
+  "version": "0.3.0",
+  "description": "A local map of your project for Claude Code: it splits the project into areas, writes a small subagent for each, and tells you when to /compact or /clear. Fixed rules, no AI.",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -14,7 +14,7 @@
     "claude-desktop",
     "mcp",
     "context",
-    "network-map"
+    "subagents"
   ],
   "bin": {
     "weave": "bin/weave.js"
@@ -29,7 +29,6 @@
     "dist",
     "src/ui/dist",
     "templates",
-    "docs",
     "README.md",
     "AI_SETUP.md",
     "THIRD_PARTY_NOTICES.md",

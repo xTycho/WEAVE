@@ -1,18 +1,17 @@
 import { appendEvent, readThreads, recentEvents, transcriptTokens, writeThread } from "../engine/activity.js";
-import { frozen, frozenLine, KEEP_PROMPTS } from "../engine/freeze.js";
-import { calibrate, startPreset, threadWarm, withoutStart } from "../engine/handoff.js";
-import { presetFromFiles, warmth } from "../engine/heat.js";
-import { contextLevel, suggestions } from "../engine/rules.js";
-import { attach, isLive, nodeForPath, presetFor, wake, windowNote } from "../engine/window.js";
+import { mapNote, projectName, writeAgents } from "../engine/agents.js";
+import { agentAreas, areas } from "../engine/areas.js";
+import { nodeForPath } from "../engine/map.js";
+import { meter, meterLine } from "../engine/meter.js";
 import { toRelative } from "../paths.js";
 import { ContextStore } from "../store.js";
-import type { ActivityEvent, ContextMap, Verb, WeaveNode } from "../types.js";
+import type { ContextMap, Verb, WeaveNode } from "../types.js";
 
 /**
  * Claude Code hook handler: `weave hook` reads one hook payload on stdin.
- * Plain code, no model: it logs what a thread does so the map can show it,
- * gates detached files when the user chose Block, tells a new thread which
- * context window it runs on, and tells it per message which files are frozen.
+ * Plain code, no model: it logs which files a thread touches, gives a new
+ * thread the map of areas and their subagents, and adds at most one meter
+ * line per user message.
  */
 
 export interface HookInput {
@@ -23,7 +22,8 @@ export interface HookInput {
   prompt?: string;
   tool_name?: string;
   tool_input?: Record<string, unknown>;
-  tool_use_id?: string;
+  /** Set when the call runs inside a subagent. */
+  agent_id?: string;
 }
 
 interface Classified { verb: Verb; node: WeaveNode; path?: string }
@@ -64,7 +64,8 @@ export interface HookOutput {
   exitCode: number;
 }
 
-const json = (v: unknown): HookOutput => ({ stdout: JSON.stringify(v), exitCode: 0 });
+const context = (event: string, text: string): HookOutput =>
+  ({ stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: text } }), exitCode: 0 });
 
 /** Wrappers that tools and other sessions put around a prompt. They say nothing about the thread. */
 const WRAPPERS = /<(system-reminder|relay|wake|note|command-[\w-]+|local-command-[\w-]+)\b[^>]*>[\s\S]*?<\/\1>/gi;
@@ -85,73 +86,61 @@ export function titleFrom(tool: string, input: Record<string, unknown> = {}): st
   return v?.replace(/\s+/g, " ").trim().slice(0, 80) || undefined;
 }
 
+/** Prompts and their first lines kept per thread; the meter needs the last few. */
+export const KEEP_PROMPTS = 4;
+
 export function handleHook(input: HookInput, root = input.cwd ?? process.cwd()): HookOutput {
   const store = new ContextStore(root);
   const { map } = store.load(false);
-  if (!map.nodes.length || !map.presets.length) return { exitCode: 0 };
+  if (!map.nodes.length) return { exitCode: 0 };
   const session = input.session_id ?? "unknown";
   const event = input.hook_event_name;
-  const preset = presetFor(map, session);
 
   if (event === "SessionStart") {
     writeThread(store.paths, session, { transcript: input.transcript_path });
-    return json({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: windowNote(map, preset, warmth(map, preset, recentEvents(store.paths)).warm) } });
+    const all = areas(map, recentEvents(store.paths));
+    // Claude Code picks up changed agent files within seconds, so the areas are fresh for this thread's first hand-off.
+    try { writeAgents(store.root, projectName(map), all); } catch { /* read-only checkout: the note still lists the areas */ }
+    const note = mapNote(map, all);
+    return note ? context("SessionStart", note) : { exitCode: 0 };
   }
+
   if (event === "UserPromptSubmit") {
-    const name = threadName(withoutStart(input.prompt ?? ""));
     const prev = readThreads(store.paths)[session];
+    const name = threadName(input.prompt ?? "");
     const prompts = [...(prev?.prompts ?? []), Date.now()].slice(-KEEP_PROMPTS);
-    writeThread(store.paths, session, { transcript: input.transcript_path, prompts, ...(name && !prev?.named ? { name, named: true } : {}) });
-    // A start line from the map moves this thread onto the preset it names, and the thread gets that preset's note.
-    const asked = startPreset(input.prompt ?? "");
-    const moved = asked && map.presets.find((p) => p.id === asked);
-    if (moved) store.update((m) => { m.assign[session] = moved.id; });
-    const note = moved ? windowNote(map, moved, warmth(map, moved, recentEvents(store.paths)).warm) : undefined;
+    const asks = [...(prev?.asks ?? []), name].slice(-KEEP_PROMPTS);
+    const thread = writeThread(store.paths, session, { transcript: input.transcript_path ?? prev?.transcript, prompts, asks, ...(name && !prev?.named ? { name, named: true } : {}) });
+    if (!map.settings.meter) return { exitCode: 0 };
     const events = recentEvents(store.paths);
-    const line = map.settings.freeze ? frozenLine(frozen(map, events, session, prompts).map((n) => n.paths[0] ?? n.id)) : undefined;
-    // Auto-calibrate: once per warning level, the thread is told to suggest a new thread on the best preset.
-    const tokens = transcriptTokens(input.transcript_path ?? prev?.transcript);
-    const level = contextLevel(tokens, map.settings).level;
-    const nudge = level === "ok" ? undefined : calibrate(map, events, session, tokens, level, prev?.warned,
-      () => store.update((m) => { const warm = threadWarm(m, events, session); return warm.length ? presetFromFiles(m, warm, true) : undefined; }).result);
-    if (nudge && level !== "ok") writeThread(store.paths, session, { warned: level });
-    // After a /compact the thread is back under amber, so the next crossing is told again.
-    if (level === "ok" && prev?.warned) writeThread(store.paths, session, { warned: undefined });
-    const context = [note, line, nudge].filter(Boolean).join("\n");
-    return context ? json({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: context } }) : { exitCode: 0 };
+    const all = areas(map, events);
+    const m = meter({ map, events, thread, tokens: transcriptTokens(thread.transcript), areas: all, agents: agentAreas(all), at: "prompt" });
+    const line = meterLine(m);
+    if (!line) return { exitCode: 0 };
+    writeThread(store.paths, session, { nudged: prompts.at(-1) });
+    return context("UserPromptSubmit", line);
   }
-  if (event !== "PreToolUse" && event !== "PostToolUse") return { exitCode: 0 };
-  const title = event === "PreToolUse" ? titleFrom(input.tool_name ?? "", input.tool_input) : undefined;
+
+  if (event !== "PostToolUse") return { exitCode: 0 };
+  const title = titleFrom(input.tool_name ?? "", input.tool_input);
   if (title) { writeThread(store.paths, session, { name: title, named: true }); return { exitCode: 0 }; }
 
   const hit = classify(map, store.root, input.tool_name ?? "", input.tool_input);
   if (!hit) return { exitCode: 0 };
-  let outside = !isLive(hit.node, preset), woke = false;
-  // An asleep file wakes the moment Claude reads or edits it, whatever the other settings say.
-  if (outside && preset.asleep?.includes(hit.node.id)) {
-    store.update((m) => { wake(m, preset.id, hit.node.id); });
-    outside = false;
-    woke = true;
-  }
-  const base: ActivityEvent = { t: Date.now(), s: session, ph: event === "PreToolUse" ? "start" : "end", verb: hit.verb, node: hit.node.id, tool: input.tool_name ?? "", id: input.tool_use_id, ...(hit.path ? { path: hit.path } : {}), ...(outside ? { outside: true } : {}), ...(woke ? { woke: true } : {}) };
+  const sub = !!input.agent_id;
+  appendEvent(store.paths, { t: Date.now(), s: session, ph: "end", verb: hit.verb, node: hit.node.id, tool: input.tool_name ?? "", ...(hit.path ? { path: hit.path } : {}), ...(sub ? { sub: true } : {}) });
 
-  if (event === "PreToolUse" && outside && map.settings.gate === "block" && hit.node.kind !== "tool") {
-    appendEvent(store.paths, { ...base, blocked: true });
-    return json({
-      hookSpecificOutput: {
-        hookEventName: "PreToolUse", permissionDecision: "deny",
-        permissionDecisionReason: `WEAVE: ${hit.path ?? hit.node.label} is detached from this thread's context window "${preset.name}". Ask the user to reattach it in the WEAVE map, or work without it.`,
-      },
-    });
-  }
-  appendEvent(store.paths, base);
-  if (event === "PostToolUse") {
-    writeThread(store.paths, session, {});
-    if (map.settings.autoApply) {
-      // Only reattaching is automatic; detaching always waits for the user.
-      const attachable = suggestions(map, preset, recentEvents(store.paths)).filter((s) => s.attach);
-      if (attachable.length) store.update((m) => { for (const s of attachable) attach(m, preset.id, s.node); });
-    }
-  }
-  return { exitCode: 0 };
+  // A subagent's work is the hand-off working; the meter only speaks to the thread itself.
+  if (sub || !map.settings.meter) return { exitCode: 0 };
+  const thread = readThreads(store.paths)[session];
+  const start = thread?.prompts?.at(-1);
+  if (!thread || !start || thread.nudged === start) return { exitCode: 0 };
+  const events = recentEvents(store.paths);
+  const all = areas(map, events);
+  const m = meter({ map, events, thread, tokens: transcriptTokens(thread.transcript), areas: all, agents: agentAreas(all), at: "tool", root: store.root });
+  const line = meterLine(m);
+  if (!line) return { exitCode: 0 };
+  writeThread(store.paths, session, { nudged: start });
+  return context("PostToolUse", line);
 }
+

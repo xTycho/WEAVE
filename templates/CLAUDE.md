@@ -1,6 +1,6 @@
 # WEAVE context router
-Each thread starts with a short WEAVE note naming its context window: core files, warm files, attached folders and detached files.
-1. Start with the warm files, then the attached folders. Open cold files only when the task needs them.
-2. Skip detached files unless the user asks for them.
-3. Need another area? Call `weave_attach` with a folder or file. Done with one? Call `weave_detach`.
-4. `weave_map` lists features with token costs; `weave_get_context` lists the current window. Both return paths only.
+WEAVE maps this project into areas, each with its own subagent (`weave-<area>` in .claude/agents/). A thread's first note lists them.
+1. Hand a task that stays inside one area to that area's subagent. It works in its own context and returns a summary, so this thread stays small.
+2. Do quick lookups and edits that cross areas here.
+3. When a WEAVE line says to run /compact or /clear, tell the user in one line. Only the user can run them.
+4. `weave_map` lists the areas; `weave_area_for` says which area a path is in. Both return paths only.

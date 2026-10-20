@@ -1,4 +1,4 @@
-/** Three layers: the core context, the features it routes to, and the elements each feature holds. */
+/** Three layers: the core context, the folders (features) it routes to, and the elements each folder holds. */
 export type Tier = "core" | "feature" | "element";
 export type Kind = "core" | "feature" | "code" | "design" | "doc" | "test" | "tool";
 
@@ -12,11 +12,8 @@ export interface WeaveNode {
   /** Features this node belongs to. More than one makes it a shared element. */
   of: string[];
   bytes: number;
+  /** Estimated tokens (bytes / 4). */
   tokens: number;
-  /** True when every file behind `tokens` was counted exactly. */
-  exact?: boolean;
-  /** Created in the map rather than found by the scanner. */
-  custom?: boolean;
   /** Tool nodes: the command this node stands for. */
   command?: string;
 }
@@ -28,64 +25,20 @@ export interface Link {
   why: "tests" | "is imported by";
 }
 
-/** A saved context window. Threads run on one preset; several can share it. */
-export interface Preset {
-  id: string;
-  name: string;
-  color: string;
-  features: string[];
-  detached: string[];
-  /**
-   * Files the user put to sleep because they were overdue. Asleep files are
-   * detached and left out of the thread note, and wake (reattach) the moment
-   * a thread on this preset reads or edits them.
-   */
-  asleep?: string[];
-  /** Saved by auto-calibrate. A later auto save with the same name replaces it instead of adding another preset. */
-  auto?: boolean;
-  /** What a saved preset holds, by `tagFor`: UI, Docs, Tests or a feature name. */
-  tag?: string;
-  /** Last attach or detach time per node, so old rule evidence does not re-fire. */
-  changedAt: Record<string, number>;
-}
-
-export interface Override {
-  label?: string;
-  kind?: Kind;
-  /** Extra features this node belongs to. */
-  addOf?: string[];
-}
-
-export type Gate = "flag" | "block";
-
 export interface Settings {
-  autoApply: boolean;
-  /** Rank attached files warm or cold by recent use and tell threads to start with the warm ones. */
-  warmCold: boolean;
-  /** Tell each thread which files it has moved on from, per message. Per thread only; never written into presets. */
-  freeze: boolean;
-  /** Past each warning, tell the thread once to suggest a new thread with a start line, saving a preset from its warm files when none fits. */
-  autoCalibrate: boolean;
-  /** Context tokens from which a thread turns amber. */
-  heavyAt: number;
-  /** Context tokens from which a thread turns red. */
-  freshAt: number;
-  gate: Gate;
-  idleAfter: number;
-  defaultPreset: string;
+  /** The model's context window in tokens; every meter rule is a share of it. */
+  window: number;
+  /** Share of the window from which /compact is suggested when much of the thread is stale. */
+  compactAt: number;
+  /** Tell threads when to /compact, /clear or hand work to an area's subagent. */
+  meter: boolean;
 }
 
 export interface ContextMap {
-  version: 2;
+  version: 3;
   scannedAt?: string;
   nodes: WeaveNode[];
   links: Link[];
-  presets: Preset[];
-  /** Thread (session id) -> preset id. Threads without an entry use the default preset. */
-  assign: Record<string, string>;
-  overrides: Record<string, Override>;
-  custom: WeaveNode[];
-  dismissed: string[];
   settings: Settings;
   updatedAt?: string;
 }
@@ -97,46 +50,73 @@ export interface ScanResult {
   files: Record<string, string>;
 }
 
+/**
+ * A group of features that threads use together, worked out from the
+ * activity log by fixed rules. Each area gets its own subagent.
+ */
+export interface Area {
+  id: string;
+  name: string;
+  /** The subagent's name, `weave-<id>`. */
+  agent: string;
+  features: string[];
+  folders: string[];
+  /** The area's most used files, busiest first. */
+  files: string[];
+  tokens: number;
+  /** Threads that worked in this area. */
+  threads: number;
+  /** "usage" once threads have worked in it, else "folders" from the scan alone. */
+  from: "usage" | "folders";
+}
+
 export type Verb = "Read" | "Edit" | "Run" | "PR";
 
-/** One line of `.claude/weave/activity.jsonl`, written by the Claude Code hook. */
+/** One line of `.claude/weave/activity.jsonl`, written by the Claude Code hook after each tool call. */
 export interface ActivityEvent {
   t: number;
   /** Session id of the thread that acted. */
   s: string;
-  ph: "start" | "end";
+  /** Older logs also hold "start" lines; only "end" lines count. */
+  ph?: "start" | "end";
   verb: Verb;
   node: string;
   path?: string;
   tool: string;
-  outside?: boolean;
-  /** The file was asleep and woke (reattached) for this action. */
-  woke?: boolean;
-  blocked?: boolean;
-  /** Pairs a start with its end. */
-  id?: string;
+  /** The call ran inside a subagent, so its reads stayed out of the thread's own context. */
+  sub?: boolean;
 }
 
 export interface ThreadInfo {
   id: string;
   name: string;
-  /** Named from the thread's first prompt. */
+  /** Named from the thread's first prompt or a title tool. */
   named?: boolean;
   startedAt: number;
   lastSeen: number;
   transcript?: string;
   /** Times of the thread's last few user messages, oldest first. */
   prompts?: number[];
+  /** First line of the thread's last few user messages, oldest first. */
+  asks?: string[];
+  /** Prompt time of the last meter line, so a thread hears at most one per message. */
+  nudged?: number;
   /** Tokens in the thread's context window, read from its transcript. */
   contextTokens?: number;
-  /** The highest warning auto-calibrate has already told this thread about. */
-  warned?: "heavy" | "full";
 }
 
-export interface Suggestion {
-  rule: "Asked while detached" | "Linked file" | "Unused";
-  node: string;
-  attach: boolean;
-  text: string;
-  key: string;
+export type MeterLevel = "ok" | "delegate" | "compact" | "clear";
+
+export interface Meter {
+  level: MeterLevel;
+  tokens?: number;
+  window: number;
+  /** tokens / window, 0 to 1. */
+  share: number;
+  /** Tokens of files the thread read or edited but has moved on from. */
+  stale: number;
+  /** The line for the user, when level is not ok. */
+  text?: string;
+  /** For "delegate": the subagent to hand the work to. */
+  agent?: string;
 }

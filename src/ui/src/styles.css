@@ -11,7 +11,7 @@
   --cord: #B4B6BA; --cord-live: #8E95DB; --hull: rgba(195,165,221,.16); --hull-line: rgba(163,169,230,.55);
   --foil: linear-gradient(115deg,#F1A9B0 0%,#E9A6D2 17%,#C3A5DD 33%,#A3A9E6 50%,#CFE19C 67%,#F6BE8A 83%,#F1A9B0 100%);
   --shadow: 0 16px 48px rgba(10,11,13,.14);
-  --frost: #8FC3E6; --frost-bg: rgba(143,195,230,.22); --amber: #E59A54; --amber-bg: rgba(229,154,84,.16); --red: #E5484D; --red-bg: rgba(229,72,77,.14);
+  --amber: #E59A54; --amber-bg: rgba(229,154,84,.16); --red: #E5484D; --red-bg: rgba(229,72,77,.14);
   --head: 'Righteous','Arial Rounded MT Bold',system-ui,sans-serif;
   --body: 'Space Grotesk',system-ui,-apple-system,'Segoe UI',sans-serif;
 }
@@ -19,12 +19,12 @@
   --bg: #0A0B0D; --surface: #16181C; --surface-2: #121418; --card: #16181C;
   --line: #2C2F34; --line-2: #3A3D43; --fg: #F0F0F1; --dim: #989DA4;
   --cord: #3A3D43; --cord-live: #A3A9E6; --hull: rgba(163,169,230,.08); --hull-line: rgba(163,169,230,.35);
-  --shadow: 0 16px 48px rgba(0,0,0,.55); --frost-bg: rgba(143,195,230,.14); --red-bg: rgba(229,72,77,.18); color-scheme: dark } }
+  --shadow: 0 16px 48px rgba(0,0,0,.55); --red-bg: rgba(229,72,77,.18); color-scheme: dark } }
 :root[data-theme="dark"] {
   --bg: #0A0B0D; --surface: #16181C; --surface-2: #121418; --card: #16181C;
   --line: #2C2F34; --line-2: #3A3D43; --fg: #F0F0F1; --dim: #989DA4;
   --cord: #3A3D43; --cord-live: #A3A9E6; --hull: rgba(163,169,230,.08); --hull-line: rgba(163,169,230,.35);
-  --shadow: 0 16px 48px rgba(0,0,0,.55); --frost-bg: rgba(143,195,230,.14); --red-bg: rgba(229,72,77,.18); color-scheme: dark }
+  --shadow: 0 16px 48px rgba(0,0,0,.55); --red-bg: rgba(229,72,77,.18); color-scheme: dark }
 
 html, body { height: 100%; }
 body { margin: 0; background: var(--bg); color: var(--fg); font: 400 14px/1.5 var(--body); }
@@ -74,20 +74,12 @@ header::before { content: ""; position: absolute; inset: 0 0 auto; height: 3px; 
 .more[open] > summary .lead::after { content: " −"; }
 .more[open] > summary { margin-bottom: 4px; }
 
-/* Meter: one bar for the whole project, warm | cold | overdue | detached. */
+/* Header bar: each area's share of the project's tokens. */
 .meter { margin-left: auto; display: grid; gap: 6px; min-width: 240px; max-width: 360px; flex: 0 1 320px; cursor: default; }
 .mlabel { font: 400 12.5px/1 var(--body); color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 .mlabel b { font-weight: 500; color: var(--fg); }
 .meter .bar { display: flex; height: 8px; border-radius: 4px; background: var(--surface); overflow: hidden; gap: 2px; }
 .meter .seg { display: block; height: 100%; min-width: 0; transition: width .5s ease; }
-.meter .seg.warm { background: var(--foil); background-size: 240% 100%; }
-.meter .seg.cold { background: var(--p-blue); opacity: .35; }
-.meter .seg.due { background: repeating-linear-gradient(135deg, #E59A54 0 3px, rgba(229,154,84,.35) 3px 6px); }
-.meter .seg.det { background: repeating-linear-gradient(135deg, var(--line-2) 0 2px, transparent 2px 5px); opacity: .7; }
-.due-count { flex: none; height: 26px; padding: 0 10px; border-radius: 13px; border: 1px solid #E59A54; background: transparent; color: var(--fg); cursor: pointer;
-  font: 500 11px/1 var(--body); letter-spacing: .08em; text-transform: uppercase; }
-.due-count[aria-pressed="true"] { background: #E59A54; color: #0A0B0D; }
-.due-count[hidden] { display: none; }
 
 .main { display: grid; grid-template-columns: 1fr clamp(320px, 26vw, 380px); min-height: 0; }
 @media (max-width: 860px) { .main { grid-template-columns: 1fr; grid-template-rows: 62vh auto; } .app { height: auto; } }
@@ -151,18 +143,6 @@ header::before { content: ""; position: absolute; inset: 0 0 auto; height: 3px; 
 .node .meta .end { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .node .meta > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .node.off { opacity: .42; filter: grayscale(1); border-style: dashed; }
-/* Warm and cold: warm files glow in their kind colour; cold files stay attached but fade back. */
-.node.warm { border-color: var(--dotc); box-shadow: 0 0 0 1px var(--dotc), 0 0 18px -2px var(--dotc); }
-.node.warm.sel { box-shadow: 0 0 0 2px var(--fg), 0 0 18px -2px var(--dotc); }
-.node.cold { opacity: .68; }
-.legend i.warm { background: var(--p-peach); box-shadow: 0 0 8px var(--p-peach); }
-.legend i.cold { background: var(--line-2); }
-.legend i.hot { background: #F6A35A; box-shadow: 0 0 0 3px rgba(246,163,90,.3), 0 0 8px #F6A35A; }
-/* Hot: a warm border; the pulse and embers come from the fx layer. */
-.node.hot { border-color: #F6A35A; box-shadow: 0 0 0 1px #F6A35A, 0 0 22px -2px #F28B4B; }
-.node.hot.sel { box-shadow: 0 0 0 2px var(--fg), 0 0 22px -2px #F28B4B; }
-.world.dots .node.hot { box-shadow: 0 0 calc(18px * var(--inv, 1)) calc(-2px * var(--inv, 1)) #F28B4B; border-color: #F6A35A; }
-.node.cold:hover, .node.cold.sel, .node.cold.working { opacity: 1; }
 .node.feature { width: 196px; border-width: 1.5px; }
 .node.core { width: 220px; padding: 14px 16px; border: 1px solid rgba(10,11,13,.14); background: var(--foil); background-size: 260% 260%; animation: foil 10s ease-in-out infinite; box-shadow: var(--shadow); }
 .node.core, .node.core .cap, .node.core .meta { color: #0A0B0D; }
@@ -185,7 +165,6 @@ header::before { content: ""; position: absolute; inset: 0 0 auto; height: 3px; 
 .world.dots .node.feature:not(.working) { border-width: calc(2px * var(--inv, 1)); }
 .world.dots .node.feature { border-width: calc(1.5px * var(--inv, 1)); }
 .world.dots .node.sel { box-shadow: 0 0 0 calc(2px * var(--inv, 1)) var(--fg); }
-.world.dots .node.warm { box-shadow: 0 0 calc(16px * var(--inv, 1)) calc(-2px * var(--inv, 1)) var(--dotc); }
 .world.dots .node .meta, .world.dots .node .sets { display: none; }
 .world.dots .node .top { margin: 0; min-height: 0; order: 2; }
 .world.dots .node:not(.working) .top { display: none; }
@@ -216,7 +195,6 @@ header::before { content: ""; position: absolute; inset: 0 0 auto; height: 3px; 
 .plist > li { min-width: 0; border-radius: 10px; position: relative; }
 .plist > li.cur { background: var(--surface); }
 /* In use: a thread on this preset is working now. Pinned to the top, with the hot pulse and embers. */
-.plist > li.inuse { box-shadow: inset 0 0 0 1px #F6A35A; }
 .plist .pick { width: 100%; min-width: 0; display: grid; grid-template-columns: 10px auto minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 8px 10px; border: 0; border-radius: 10px; background: transparent; cursor: pointer; text-align: left; color: inherit; }
 .plist > li:not(.cur) .pick:hover { background: var(--surface-2); }
 .plist .dot { width: 10px; height: 10px; border-radius: 3px; }
@@ -226,7 +204,6 @@ header::before { content: ""; position: absolute; inset: 0 0 auto; height: 3px; 
 /* A thread: orb, name, context bar, hand-off and move. Details live in tooltips. */
 .thread { display: grid; grid-template-columns: 16px minmax(0, 1fr) 48px auto auto auto; align-items: center; gap: 6px; min-width: 0; height: 30px; padding: 0 4px 0 6px; border-radius: 8px; }
 .thread:hover { background: var(--surface-2); }
-.thread.sel { box-shadow: inset 0 0 0 1.5px var(--frost); }
 .tname { min-width: 0; height: 24px; border-radius: 6px; border: 1px solid var(--fg); background: var(--card); padding: 0 6px; color: var(--fg); font: 500 12.5px var(--body); }
 .ticon { width: 16px; height: 16px; display: grid; place-items: center; }
 .ticon canvas { width: 18px; height: 18px; display: none; filter: contrast(1.3); }
@@ -247,8 +224,6 @@ header::before { content: ""; position: absolute; inset: 0 0 auto; height: 3px; 
 .ibtn { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 6px; border: 0; background: none; color: var(--dim); cursor: pointer; position: relative; padding: 0; }
 .ibtn:hover { background: var(--surface); color: var(--fg); }
 .ibtn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-.ibtn.new { color: var(--fg); background: var(--amber-bg); box-shadow: inset 0 0 0 1px var(--amber); }
-.ctx-full .ibtn.new { background: var(--red-bg); box-shadow: inset 0 0 0 1px var(--red); }
 /* The native select sits invisibly over the chevron, so the menu is the system's own. */
 .ibtn.move select { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
 .ibtn.end { opacity: 0; }
@@ -280,10 +255,6 @@ aside { border-left: 1px solid var(--line); overflow-y: auto; display: flex; fle
 @media (max-width: 860px) { aside { border-left: none; border-top: 1px solid var(--line); padding-left: max(0px, env(safe-area-inset-left, 0px)); padding-right: max(0px, env(safe-area-inset-right, 0px)); } }
 .panel { padding: 16px; border-bottom: 1px solid var(--line); display: grid; gap: 12px; }
 .panel h2 { margin: 0; }
-.suggest { background: var(--surface); border-radius: 16px; padding: 16px; display: grid; gap: 8px; position: relative; overflow: hidden; }
-.suggest::before { content: ""; position: absolute; inset: 0 0 auto; height: 3px; background: var(--foil); }
-.suggest p { margin: 0; font-size: 13px; }
-.suggest .row { display: flex; gap: 8px; flex-wrap: wrap; }
 .legend { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; font-size: 12px; }
 .legend span { display: flex; align-items: center; gap: 8px; }
 .legend i { width: 18px; height: 3px; border-radius: 2px; display: inline-block; }
@@ -323,52 +294,24 @@ html.still * { animation: none !important; transition: none !important; }
 .prow { display: flex; gap: 6px; flex-wrap: wrap; }
 .prow .btn { height: 30px; font-size: 11px; padding: 0 10px; }
 .prow input { flex: 1 1 140px; height: 30px; }
-.plist .def { font: 700 9px/1 var(--body); letter-spacing: .12em; text-transform: uppercase; color: var(--dim); margin-left: 6px; }
+.plist .def { font: 700 9px/1 var(--body); letter-spacing: .12em; text-transform: uppercase; color: var(--dim); margin-left: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .prow input, .insp input { height: 30px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--card); padding: 0 8px; color: var(--fg); max-width: 100%; }
-.keyrow { display: flex; gap: 8px; }
-.keyrow input { flex: 1; min-width: 0; height: 34px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--card); padding: 0 10px; color: var(--fg); font: 400 13px var(--body); }
 .legend i.dash { background: repeating-linear-gradient(90deg, var(--line-2) 0 4px, transparent 4px 8px); }
 .empty-map { position: absolute; inset: 0; display: grid; place-items: center; color: var(--dim); font-size: 14px; pointer-events: none; }
 button:disabled { opacity: .5; cursor: default; }
 
 /* Panels hide until they have something to show. */
-.panel[hidden], .editing[hidden], .toast[hidden] { display: none; }
 .insp .ihead { display: flex; align-items: center; justify-content: space-between; }
 .insp .x { width: 26px; height: 26px; padding: 0; border-radius: 6px; border: 1px solid var(--line-2); background: transparent; cursor: pointer; color: var(--fg); font-size: 15px; line-height: 1; }
 .insp .x:hover { border-color: var(--fg); }
 .insp .iname { font: 500 15px/1.25 var(--body); overflow-wrap: anywhere; }
-.heat { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 11.5px; background: var(--surface); }
-.heat.hot { background: linear-gradient(90deg, #F28B4B, #FFD27A); color: #0A0B0D; }
-.heat.warm { background: var(--p-peach); color: #0A0B0D; }
-.heat.cold { background: var(--surface); color: var(--dim); }
 
-/* "Editing" label on the map while a saved preset is selected. */
-.badges { position: absolute; left: max(12px, env(safe-area-inset-left, 0px)); top: 12px; z-index: 5; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
-.editing { display: inline-flex; align-items: center; gap: 8px;
-  height: 32px; padding: 0 6px 0 12px; border-radius: 8px; background: var(--card); border: 1px solid var(--c, var(--line-2)); box-shadow: var(--shadow); font-size: 12.5px; }
-.editing > i { width: 8px; height: 8px; border-radius: 2px; background: var(--c); }
-.editing button { width: 22px; height: 22px; padding: 0; border: 0; border-radius: 5px; background: transparent; cursor: pointer; color: var(--dim); font-size: 15px; line-height: 1; }
-.editing button:hover { background: var(--surface); color: var(--fg); }
 
 /* Short messages over the map. */
 .toast { position: absolute; left: 50%; bottom: 56px; transform: translateX(-50%); z-index: 6; max-width: min(460px, calc(100% - 32px));
   padding: 10px 14px; border-radius: 10px; background: var(--fg); color: var(--bg); font-size: 12.5px; box-shadow: var(--shadow); animation: slide .3s ease; }
 
-/* Overdue and asleep files. */
-.node.due { border-color: #E59A54; border-style: dashed; }
-.world.show-due .node:not(.due) { opacity: .14; }
-.world.show-due .node.due { opacity: 1; filter: none; box-shadow: 0 0 0 2px #E59A54; }
-.world.show-due .cord { opacity: .2; }
-.node.asleep { opacity: .22; filter: grayscale(1); }
-.node.asleep .name::after { content: " zz"; font-size: 11px; color: var(--dim); letter-spacing: .08em; }
-.legend i.due { background: repeating-linear-gradient(135deg, #E59A54 0 3px, transparent 3px 6px); }
 .legend i.sleep { background: var(--line-2); opacity: .45; }
-.suggest.due::before { background: repeating-linear-gradient(135deg, #E59A54 0 6px, #F6BE8A 6px 12px); }
-.duelist { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
-.duelist li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; font-size: 12px; }
-.duelist code { font: 400 12px var(--body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.duelist span { color: var(--dim); font-variant-numeric: tabular-nums; }
-.duelist .btn { height: 26px; font-size: 10.5px; padding: 0 8px; }
 /* Live: a folder tree along the route the map's signals take, with signals flowing down the branches. */
 .live { font-size: 12.5px; min-width: 0; }
 .live ul { list-style: none; margin: 0; padding: 0; }
@@ -390,35 +333,13 @@ button:disabled { opacity: .5; cursor: default; }
 .live .leaf small { color: var(--dim); font-size: 11px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .live .who { width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
 
-/* Particle layers: they sit on the node's edge and never catch the pointer. */
-.fx { position: absolute; inset: 0; pointer-events: none; border-radius: inherit; }
-.fx b { position: absolute; inset: 0; border-radius: inherit; }
-.fx i { position: absolute; width: 4px; height: 4px; margin: -2px 0 0 -2px; border-radius: 50%; opacity: 0; }
-/* Hot: a ring swells off the border, and embers fly outward from the edge. */
-.fx-hot b { animation: pulse 2.2s ease-out infinite; }
-@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(246,163,90,.55); } 100% { box-shadow: 0 0 0 12px rgba(246,163,90,0); } }
-.fx-hot i { left: var(--ex); top: var(--ey); background: radial-gradient(circle, #FFE3A3, #F6A35A 60%, #F28B4B); box-shadow: 0 0 6px 1px rgba(246,163,90,.7);
-  animation: fly 2.4s ease-out var(--d) infinite; }
-.fx-hot i:nth-of-type(3n) { background: radial-gradient(circle, #FFD0D4, #F1A9B0); box-shadow: 0 0 6px 1px rgba(241,169,176,.7); }
-@keyframes fly { 0% { transform: translate(0, 0) scale(1); opacity: 0; } 15% { opacity: 1; } 100% { transform: translate(var(--dx), var(--dy)) scale(.3); opacity: 0; } }
-/* Frozen: a ring closes in on the card, and specks drift from around it into its core. */
-.node.frozen { border-color: var(--frost); box-shadow: 0 0 14px -4px var(--frost); }
-.node.frozen.sel { box-shadow: 0 0 0 2px var(--fg), 0 0 14px -3px var(--frost); }
-.fx-frost b { animation: collapse 3s ease-in infinite; }
-@keyframes collapse { 0% { box-shadow: 0 0 0 12px rgba(143,195,230,0), inset 0 0 0 0 rgba(143,195,230,0); } 40% { box-shadow: 0 0 0 5px rgba(143,195,230,.35), inset 0 0 0 0 rgba(143,195,230,0); }
-  80%, 100% { box-shadow: 0 0 0 0 rgba(143,195,230,0), inset 0 0 18px 0 rgba(143,195,230,.28); } }
-.fx-frost i { background: radial-gradient(circle, #fff, #CBE7F8 60%, #8FC3E6); box-shadow: 0 0 5px 1px rgba(170,215,245,.8); animation: sink 3.2s ease-in var(--d) infinite; }
-@keyframes sink { 0% { left: var(--ox); top: var(--oy); opacity: 0; transform: scale(1); } 20% { opacity: 1; } 85% { opacity: .8; } 100% { left: 50%; top: 50%; opacity: 0; transform: scale(.2); } }
-html.still .fx { display: none; }
-.world.dots .node.frozen { border-color: var(--frost); box-shadow: 0 0 calc(14px * var(--inv, 1)) calc(-3px * var(--inv, 1)) var(--frost); }
-.world.dots .fx i { display: none; }
-.editing.frost { border-color: var(--frost); }
-.editing.frost > i { background: var(--frost); border-radius: 50%; }
-.legend i.frost { background: var(--frost); box-shadow: inset 0 0 0 2px #fff, 0 0 6px var(--frost); }
-.heat.frozen { background: var(--frost-bg); color: var(--fg); box-shadow: inset 0 0 0 1px var(--frost); }
 /* Threshold inputs in the settings menu. */
 .nums { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12.5px; color: var(--dim); }
 .nums label { display: inline-flex; align-items: center; gap: 6px; }
 .nums input { width: 72px; height: 30px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--card); padding: 0 8px; color: var(--fg); font: 400 13px var(--body); font-variant-numeric: tabular-nums; }
 
 
+/* The meter's advice on a thread row. */
+.advice { font: 600 10px/1 var(--body); letter-spacing: .04em; padding: 4px 6px; border-radius: 6px; white-space: nowrap; background: var(--surface); color: var(--fg); }
+.ctx-heavy .advice { background: var(--amber-bg); box-shadow: inset 0 0 0 1px var(--amber); }
+.ctx-full .advice { background: var(--red-bg); box-shadow: inset 0 0 0 1px var(--red); }

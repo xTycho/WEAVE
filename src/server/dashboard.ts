@@ -1,18 +1,15 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { basename, dirname, extname, join, normalize, resolve, sep } from "node:path";
+import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 import { ActivityTail, readThreads, recentEvents, removeThreads, transcriptTokens, writeThread } from "../engine/activity.js";
-import { heat, overdue, presetFromFiles, presetFromHeat, warmth } from "../engine/heat.js";
-import { frozen } from "../engine/freeze.js";
-import { handoff, startLine, threadWarm, type Handoff } from "../engine/handoff.js";
-import { contextLevel, suggestions } from "../engine/rules.js";
-import { countExact, removeKey, saveKey, tokenMode } from "../engine/tokens.js";
-import { attach, createPreset, deletePreset, detach, findNode, getPreset, sleep, spinUp, toggle, WeaveError } from "../engine/window.js";
-import { listFiles } from "../scanner/files.js";
-import { ContextStore, thresholds } from "../store.js";
-import type { ActivityEvent, ContextMap, Suggestion, ThreadInfo } from "../types.js";
+import { projectName, writeAgents } from "../engine/agents.js";
+import { agentAreas, areas } from "../engine/areas.js";
+import { WeaveError } from "../engine/map.js";
+import { meter } from "../engine/meter.js";
+import { ContextStore, settingsFrom } from "../store.js";
+import type { ActivityEvent, Area, ContextMap, Meter, ThreadInfo } from "../types.js";
 import { watchFiles, watchProject, type Watcher } from "../watch.js";
 
 const UI_DIST = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "ui", "dist");
@@ -48,7 +45,8 @@ function send(res: ServerResponse, status: number, body: unknown) {
 }
 
 function serveStatic(req: IncomingMessage, res: ServerResponse) {
-  const urlPath = decodeURIComponent((req.url ?? "/").split("?")[0]);
+  let urlPath: string;
+  try { urlPath = decodeURIComponent((req.url ?? "/").split("?")[0]); } catch { return send(res, 400, { error: "bad path" }); }
   let file = normalize(join(UI_DIST, urlPath));
   if (!file.startsWith(UI_DIST + sep) && file !== UI_DIST) return send(res, 403, { error: "forbidden" });
   if (!existsSync(file) || statSync(file).isDirectory()) file = join(UI_DIST, "index.html");
@@ -66,7 +64,7 @@ function serveStatic(req: IncomingMessage, res: ServerResponse) {
 function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((done, fail) => {
     let data = "";
-    req.on("data", (c) => { data += c; if (data.length > 64 * 1024) req.destroy(); });
+    req.on("data", (c) => { data += c; if (data.length > 64 * 1024) { fail(new WeaveError("Body too large.")); req.destroy(); } });
     req.on("end", () => { try { done(data ? JSON.parse(data) : {}); } catch { fail(new WeaveError("Body is not JSON.")); } });
     req.on("error", fail);
   });
@@ -77,19 +75,11 @@ const s = (v: unknown) => (typeof v === "string" ? v : undefined);
 export interface StatePayload {
   type: "state";
   project: string;
-  map: Omit<ContextMap, "links" | "overrides" | "custom" | "dismissed">;
-  /**
-   * Each thread with its preset, its context level by fixed rules, the node ids
-   * frozen for it (empty when freezing is off) and, once it passes the amber
-   * warning, the new-thread suggestion.
-   */
-  threads: (ThreadInfo & { preset: string; context: ReturnType<typeof contextLevel>; frozen: string[]; next?: Handoff })[];
-  suggestions: Record<string, Suggestion[]>;
-  /** Preset id -> its warm files (hottest first), hot files and overdue files. Warm and hot are empty when warm and cold is off. */
-  warm: Record<string, { warm: string[]; hot: string[]; overdue: string[] }>;
-  /** Node id -> heat score, rounded. Only nodes that have been read or edited. */
-  heat: Record<string, number>;
-  tokens: { mode: "exact" | "estimate"; source?: string; counting?: { done: number; total: number }; error?: string };
+  map: ContextMap;
+  /** Areas by fixed rules, busiest first; `hasAgent` marks the ones that get a subagent file. */
+  areas: (Area & { hasAgent: boolean })[];
+  /** Each thread with its meter reading. */
+  threads: (ThreadInfo & { meter: Meter })[];
 }
 
 /**
@@ -103,8 +93,6 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
   const clients = new Set<WebSocket>();
   const tail = new ActivityTail(store.paths.activity);
   let events: ActivityEvent[] = recentEvents(store.paths);
-  let counting: { done: number; total: number } | undefined;
-  let countError: string | undefined;
   let port = 0;
 
   const broadcast = (msg: unknown) => {
@@ -114,69 +102,21 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
 
   const state = (): StatePayload => {
     const { map } = store.load();
+    const all = areas(map, events), agents = agentAreas(all), withAgent = new Set(agents.map((a) => a.id));
     const week = Date.now() - 7 * 864e5;
     const threads = Object.values(readThreads(store.paths)).filter((t) => t.lastSeen > week).sort((a, b) => b.lastSeen - a.lastSeen).slice(0, 20)
       .map((t) => {
         const contextTokens = transcriptTokens(t.transcript);
-        const context = contextLevel(contextTokens, map.settings);
-        const next = context.level === "ok" ? undefined : handoff(map, events, t.id);
-        return {
-          ...t, preset: map.assign[t.id] ?? map.settings.defaultPreset, contextTokens, context,
-          frozen: map.settings.freeze ? frozen(map, events, t.id, t.prompts).map((n) => n.id) : [],
-          ...(next ? { next } : {}),
-        };
+        return { ...t, contextTokens, meter: meter({ map, events, thread: t, tokens: contextTokens, areas: all, agents, at: "view" }) };
       });
-    const { links: _l, overrides: _o, custom: _c, dismissed: _d, ...rest } = map;
-    return {
-      type: "state", project: map.nodes.find((n) => n.tier === "core")?.label ?? basename(store.root), map: rest, threads,
-      suggestions: Object.fromEntries(map.presets.map((p) => [p.id, suggestions(map, p, events).slice(0, 3)])),
-      warm: Object.fromEntries(map.presets.map((p) => {
-        const w = warmth(map, p, events);
-        return [p.id, { warm: w.warm.map((n) => n.id), hot: w.hot.map((n) => n.id), overdue: overdue(map, p, events).map((n) => n.id) }];
-      })),
-      heat: Object.fromEntries([...heat(events)].map(([id, v]) => [id, Math.round(v * 10) / 10])),
-      tokens: { ...tokenMode(), ...(counting ? { counting } : {}), ...(countError ? { error: countError } : {}) },
-    };
+    return { type: "state", project: projectName(map), map, areas: all.map((a) => ({ ...a, hasAgent: withAgent.has(a.id) })), threads };
   };
   const pushState = () => broadcast(state());
+  const agentsNow = () => { const { map } = store.load(); return writeAgents(store.root, projectName(map), areas(map, events)); };
 
-  const count = async () => {
-    if (tokenMode().mode !== "exact") return;
-    countError = undefined;
-    try {
-      const n = await countExact(store.root, listFiles(store.root), (done, total) => { counting = { done, total }; if (done % 10 === 0 || done === total) pushState(); });
-      counting = undefined;
-      if (n) store.rescan();
-    } catch (err) {
-      counting = undefined;
-      countError = (err as Error).message;
-    }
-    pushState();
-  };
-
-  const act = (body: Record<string, unknown>, fn: (map: ContextMap) => unknown) => {
-    const { result } = store.update(fn);
-    pushState();
-    return result;
-  };
-
-  const routes: Record<string, (b: Record<string, unknown>) => unknown | Promise<unknown>> = {
-    "/api/toggle": (b) => act(b, (m) => toggle(m, s(b.preset), s(b.node) ?? "")),
-    "/api/attach": (b) => act(b, (m) => attach(m, s(b.preset), s(b.node) ?? "")),
-    "/api/detach": (b) => act(b, (m) => detach(m, s(b.preset), s(b.node) ?? "")),
-    "/api/presets/create": (b) => act(b, (m) => createPreset(m, s(b.name) ?? "New preset", undefined, s(b.copyFrom))),
-    "/api/sleep": (b) => act(b, (m) => sleep(m, s(b.preset), Array.isArray(b.nodes) ? b.nodes.filter((x): x is string => typeof x === "string") : [])),
-    "/api/presets/fromHeat": (b) => act(b, (m) => presetFromHeat(m, getPreset(m), events)),
-    "/api/presets/fromThread": (b) => act(b, (m) => {
-      const thread = s(b.thread) ?? "", warm = threadWarm(m, events, thread);
-      if (!warm.length) throw new WeaveError("This thread has no warm files to save.");
-      const preset = presetFromFiles(m, warm);
-      return { preset, line: startLine(preset, handoff(m, events, thread)!) };
-    }),
-    "/api/presets/delete": (b) => act(b, (m) => deletePreset(m, s(b.id) ?? "")),
-    "/api/presets/rename": (b) => act(b, (m) => { getPreset(m, s(b.id)).name = (s(b.name) ?? "").trim().slice(0, 60) || getPreset(m, s(b.id)).name; }),
-    "/api/presets/default": (b) => act(b, (m) => { m.settings.defaultPreset = getPreset(m, s(b.id)).id; }),
-    "/api/assign": (b) => act(b, (m) => { const t = s(b.thread); if (!t) throw new WeaveError("Missing thread."); m.assign[t] = getPreset(m, s(b.preset)).id; }),
+  const routes: Record<string, (b: Record<string, unknown>) => unknown> = {
+    "/api/settings": (b) => { store.update((m) => { m.settings = settingsFrom({ ...m.settings, ...b }); }); pushState(); return true; },
+    "/api/agents": () => { const r = agentsNow(); pushState(); return r; },
     "/api/threads/rename": (b) => {
       const id = s(b.thread), name = (s(b.name) ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
       if (!id || !readThreads(store.paths)[id]) throw new WeaveError("Unknown thread.");
@@ -193,28 +133,7 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
       pushState();
       return n;
     },
-    "/api/settings": (b) => act(b, (m) => {
-      if (typeof b.autoApply === "boolean") m.settings.autoApply = b.autoApply;
-      if (typeof b.warmCold === "boolean") m.settings.warmCold = b.warmCold;
-      if (typeof b.freeze === "boolean") m.settings.freeze = b.freeze;
-      if (typeof b.autoCalibrate === "boolean") m.settings.autoCalibrate = b.autoCalibrate;
-      if (typeof b.heavyAt === "number" || typeof b.freshAt === "number") Object.assign(m.settings, thresholds(b.heavyAt ?? m.settings.heavyAt, b.freshAt ?? m.settings.freshAt));
-      if (b.gate === "flag" || b.gate === "block") m.settings.gate = b.gate;
-      if (typeof b.idleAfter === "number") m.settings.idleAfter = Math.min(500, Math.max(3, Math.round(b.idleAfter)));
-    }),
-    "/api/spin": (b) => act(b, (m) => spinUp(m, s(b.preset), s(b.design) ?? "", s(b.name) ?? "", s(b.bring) || undefined)),
-    "/api/rename": (b) => act(b, (m) => {
-      const n = findNode(m, s(b.node) ?? ""), label = (s(b.label) ?? "").trim().slice(0, 60);
-      if (label) { n.label = label; (m.overrides[n.id] ??= {}).label = label; }
-    }),
-    "/api/suggestion": (b) => act(b, (m) => {
-      const key = s(b.key) ?? "";
-      if (b.action === "dismiss") { if (!m.dismissed.includes(key)) m.dismissed.push(key); m.dismissed = m.dismissed.slice(-500); return; }
-      (b.attach ? attach : detach)(m, s(b.preset), s(b.node) ?? "");
-    }),
-    "/api/rescan": () => { store.rescan(); pushState(); void count(); return true; },
-    "/api/key": (b) => { saveKey(s(b.key) ?? ""); pushState(); void count(); return tokenMode(); },
-    "/api/key/delete": () => { removeKey(); store.rescan(); pushState(); return tokenMode(); },
+    "/api/rescan": () => { store.rescan(); agentsNow(); pushState(); return true; },
   };
 
   // Only this page may call the API: the Host must be ours and any Origin must match it.
@@ -226,20 +145,26 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
   };
 
   const server = createServer(async (req, res) => {
-    if (!trusted(req)) return send(res, 403, { error: "forbidden" });
-    const url = (req.url ?? "/").split("?")[0];
-    if (url === "/api/state" && req.method === "GET") return send(res, 200, state());
-    const route = routes[url];
-    if (route) {
-      if (req.method !== "POST" || !(req.headers["content-type"] ?? "").includes("application/json")) return send(res, 405, { error: "POST JSON only" });
-      try {
-        return send(res, 200, { ok: true, result: await route(await readBody(req)) });
-      } catch (err) {
-        return send(res, err instanceof WeaveError ? 400 : 500, { ok: false, error: (err as Error).message });
+    try {
+      if (!trusted(req)) return send(res, 403, { error: "forbidden" });
+      const url = (req.url ?? "/").split("?")[0];
+      if (url === "/api/state" && req.method === "GET") return send(res, 200, state());
+      const route = routes[url];
+      if (route) {
+        if (req.method !== "POST" || !(req.headers["content-type"] ?? "").includes("application/json")) return send(res, 405, { error: "POST JSON only" });
+        try {
+          return send(res, 200, { ok: true, result: route(await readBody(req)) });
+        } catch (err) {
+          return send(res, err instanceof WeaveError ? 400 : 500, { ok: false, error: (err as Error).message });
+        }
       }
+      if (url.startsWith("/api/")) return send(res, 404, { error: "not found" });
+      serveStatic(req, res);
+    } catch (err) {
+      // One bad request never takes the map down.
+      if (!res.headersSent) send(res, 500, { error: (err as Error).message });
+      else res.end();
     }
-    if (url.startsWith("/api/")) return send(res, 404, { error: "not found" });
-    serveStatic(req, res);
   });
 
   const wss = new WebSocketServer({ noServer: true });
@@ -268,15 +193,14 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
       pushState();
     }, 40));
     // A failed rescan (say, the map is locked for longer than the retries) waits for the next change instead of stopping the server.
-    watchers.push(watchProject(store.root, () => { try { store.rescan(); } catch (err) { console.error(`[weave] rescan failed: ${(err as Error).message}`); } void count(); }));
-    // Files freeze as time passes, without any event, so refresh open maps once a minute.
-    const tick = setInterval(() => { if (clients.size) pushState(); }, 60_000);
+    watchers.push(watchProject(store.root, () => { try { store.rescan(); } catch (err) { console.error(`[weave] rescan failed: ${(err as Error).message}`); } }));
+    // Token counts in transcripts change without any event, so refresh open maps every 20 seconds.
+    const tick = setInterval(() => { if (clients.size) pushState(); }, 20_000);
     watchers.push({ close: () => clearInterval(tick) });
   }
 
   const startPort = opts.port ?? (Number(process.env.WEAVE_PORT) || 3000);
   port = await listenWithFallback(server, startPort, host, opts.maxPortAttempts ?? 50);
-  void count();
 
   return {
     url: `http://${host === "0.0.0.0" ? "localhost" : host}:${port}`,

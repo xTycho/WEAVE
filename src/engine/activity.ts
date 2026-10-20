@@ -96,7 +96,7 @@ export function writeThread(paths: ProjectPaths, id: string, patch: Partial<Thre
 }
 
 /**
- * Drop threads from the list. Their activity stays in the log, so the presets
+ * Drop threads from the list. Their activity stays in the log, so the areas
  * keep what those threads taught them; a thread that acts again comes back as new.
  */
 export function removeThreads(paths: ProjectPaths, ids: string[]): number {

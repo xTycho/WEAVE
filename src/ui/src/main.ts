@@ -6,42 +6,41 @@ import { curve, hull, layout, type Placed } from "./layout";
 type Tier = "core" | "feature" | "element";
 type Kind = "core" | "feature" | "code" | "design" | "doc" | "test" | "tool";
 type Verb = "Read" | "Edit" | "Run" | "PR";
-interface WNode { id: string; label: string; tier: Tier; kind: Kind; paths: string[]; of: string[]; bytes: number; tokens: number; exact?: boolean; custom?: boolean; command?: string }
-interface Preset { id: string; name: string; color: string; features: string[]; detached: string[]; asleep?: string[] }
-interface Thread { id: string; name: string; preset: string; startedAt: number; lastSeen: number; contextTokens?: number; context?: { level: "ok" | "heavy" | "full"; text?: string }; frozen?: string[]; next?: Handoff }
-interface Handoff { preset?: { id: string; name: string; share: number; tokens: number }; save?: { name: string; files: number }; read: number; edited: number; folders: string[]; line?: string }
-interface Suggestion { rule: string; node: string; attach: boolean; text: string; key: string }
-interface Settings { autoApply: boolean; warmCold: boolean; freeze: boolean; autoCalibrate: boolean; heavyAt: number; freshAt: number; gate: "flag" | "block"; idleAfter: number; defaultPreset: string }
+type Level = "ok" | "delegate" | "compact" | "clear";
+interface WNode { id: string; label: string; tier: Tier; kind: Kind; paths: string[]; of: string[]; bytes: number; tokens: number; command?: string }
+interface Area { id: string; name: string; agent: string; features: string[]; folders: string[]; files: string[]; tokens: number; threads: number; from: "usage" | "folders"; hasAgent: boolean }
+interface Meter { level: Level; tokens?: number; window: number; share: number; stale: number; text?: string; agent?: string }
+interface Thread { id: string; name: string; startedAt: number; lastSeen: number; contextTokens?: number; meter: Meter }
+interface Settings { window: number; compactAt: number; meter: boolean }
 interface State {
   project: string;
-  map: { nodes: WNode[]; presets: Preset[]; assign: Record<string, string>; settings: Settings };
+  map: { nodes: WNode[]; settings: Settings };
+  areas: Area[];
   threads: Thread[];
-  suggestions: Record<string, Suggestion[]>;
-  warm: Record<string, { warm: string[]; hot: string[]; overdue: string[] }>;
-  heat: Record<string, number>;
-  tokens: { mode: "exact" | "estimate"; source?: string; counting?: { done: number; total: number }; error?: string };
 }
-interface Activity { t: number; s: string; ph: "start" | "end"; verb: Verb; node: string; path?: string; outside?: boolean; woke?: boolean; blocked?: boolean; id?: string }
+interface Activity { t: number; s: string; ph?: "start" | "end"; verb: Verb; node: string; path?: string; sub?: boolean }
 type Node = WNode & Placed;
 
 const KIND: Record<Kind, { tag: string; c: string }> = {
   core: { tag: "Core", c: "var(--foil)" },
-  feature: { tag: "Feature", c: "var(--p-violet)" },
+  feature: { tag: "Folder", c: "var(--p-violet)" },
   code: { tag: "Code", c: "var(--p-blue)" },
   design: { tag: "Design", c: "var(--p-pink)" },
   doc: { tag: "Doc", c: "var(--p-lime)" },
   test: { tag: "Test", c: "var(--p-peach)" },
   tool: { tag: "Tool", c: "var(--p-rose)" },
 };
-const COLOR: Record<string, string> = { Read: "#A3A9E6", Edit: "#E9A6D2", Run: "#F6BE8A", PR: "#CFE19C", Attach: "#8E95DB", Detach: "#B4B6BA", Sleep: "#9AA0A6", Blocked: "#F1A9B0", Asked: "#C3A5DD", Woke: "#8FC3E6" };
+const COLOR: Record<string, string> = { Read: "#A3A9E6", Edit: "#E9A6D2", Run: "#F6BE8A", PR: "#CFE19C" };
 const VERB_ING: Record<Verb, string> = { Read: "Reading", Edit: "Editing", Run: "Running", PR: "Opening PR" };
 const ORB: Record<Verb, string> = { Read: "searching", Edit: "composing", Run: "working", PR: "weaving" };
+const PALETTE = ["#A3A9E6", "#E9A6D2", "#CFE19C", "#F6BE8A", "#C3A5DD", "#F1A9B0", "#8FC3E6", "#B4D8B0"];
+const LEVEL: Record<Level, string> = { ok: "", delegate: "Hand off", compact: "/compact", clear: "/clear" };
 
 // ---------- Small helpers ----------
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const NS = "http://www.w3.org/2000/svg";
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
-const fmt = (v: number) => (v >= 1000 ? (v / 1000).toFixed(1) + "k" : String(v));
+const fmt = (v: number) => (v >= 1000 ? (v / 1000).toFixed(v >= 100_000 ? 0 : 1) + "k" : String(v));
 const store = {
   get(k: string) { try { return localStorage.getItem(k); } catch { return null; } },
   set(k: string, v: string) { try { localStorage.setItem(k, v); } catch { /* private mode */ } },
@@ -66,10 +65,9 @@ let S: State | undefined;
 let N: Node[] = [];
 let byId = new Map<string, Node>();
 let shape = "";
-let P = store.get("weave.preset") ?? "";
+/** The area the map highlights; empty shows every area. */
+let A = store.get("weave.area") ?? "";
 let selected: string | null = null;
-/** The thread whose frozen files the map shows. */
-let selThread: string | null = store.get("weave.thread") || null;
 let hits = new Set<string>();
 const els: Record<string, HTMLDivElement> = {};
 const cords: Record<string, SVGPathElement> = {};
@@ -78,59 +76,29 @@ const gC = $("cords") as unknown as SVGGElement, gH = $("hulls") as unknown as S
 const posKey = () => `weave.pos.${S?.project ?? ""}`;
 let pinned: Record<string, [number, number]> = {};
 
-const preset = (): Preset => S!.map.presets.find((p) => p.id === P) ?? S!.map.presets.find((p) => p.id === S!.map.settings.defaultPreset) ?? S!.map.presets[0];
-const liveIn = (pr: Preset, n: WNode) => n.tier === "core" || (n.tier === "feature" ? pr.features.includes(n.id) : !pr.detached.includes(n.id) && !pr.asleep?.includes(n.id) && (n.of.length === 0 || n.of.some((f) => pr.features.includes(f))));
-const isLive = (n: WNode) => liveIn(preset(), n);
-/** The default preset is Claude's default view: every file attached. It is shown, not edited. */
-const isBase = (p: Preset) => p.id === S!.map.settings.defaultPreset;
-const BASE_NOTE = "Full project is Claude's default view and keeps every file attached. Save a preset to work with fewer files.";
+const area = (): Area | undefined => S?.areas.find((a) => a.id === A);
+const colorOf = (a: Area | undefined) => (a && S ? PALETTE[S.areas.indexOf(a) % PALETTE.length] : "var(--line-2)");
+const featureOf = (n: WNode) => (n.tier === "feature" ? n.id : n.of[0]);
+const areaOfNode = (n: WNode) => { const f = featureOf(n); return f ? S?.areas.find((a) => a.features.includes(f)) : undefined; };
+const inArea = (n: WNode, a = area()) => !a || n.tier === "core" || a.features.includes(featureOf(n) ?? "");
+
 /** Thread names come from the first prompt; wrapper blocks and tags are not a name. Unnamed threads are numbered by start. */
 const WRAPPERS = /<(system-reminder|relay|wake|note|command-[\w-]+|local-command-[\w-]+)\b[^>]*>[\s\S]*?<\/\1>/gi;
 function threadLabel(t: Thread): string {
-  // Old names were cut at 48 characters, so a wrapper can be left open: drop everything from an unclosed one.
   const clean = t.name.replace(WRAPPERS, " ").replace(/<(system-reminder|relay|wake|note|command-[\w-]+|local-command-[\w-]+)\b[\s\S]*$/i, " ")
     .replace(/<\/?[a-z][\w-]*\b[^>]*>?/gi, " ").replace(/\s+/g, " ").trim();
   if (clean && !/^Thread [0-9a-z-]{6}$/i.test(clean)) return clean;
   const order = [...S!.threads].sort((a, b) => a.startedAt - b.startedAt);
   return `Thread ${order.findIndex((x) => x.id === t.id) + 1}`;
 }
-/** Warm files of the selected preset. Empty means no warm/cold split, so nothing is shown as cold. */
-const warmIds = () => new Set(S?.warm?.[preset().id]?.warm ?? []);
-const hotIds = () => new Set(S?.warm?.[preset().id]?.hot ?? []);
-const dueIds = () => new Set(S?.warm?.[preset().id]?.overdue ?? []);
-const asleep = (n: WNode) => !!preset().asleep?.includes(n.id);
-/** Files frozen for the selected thread: it read or edited them earlier, but not lately. */
-const frozenIds = () => new Set(S?.map.settings.freeze ? S.threads.find((t) => t.id === selThread)?.frozen ?? [] : []);
-/** Highlights the overdue files on the map, like a search. */
-let showDue = false;
-/**
- * Particle layers. Hot: a ring pulses outward and embers fly off the edge.
- * Frozen: a ring collapses inward and specks drift from around the node into
- * its core. Fixed angles and delays, so a redraw never makes them jump.
- */
-const RAYS = [[-90, 0], [-38, 1.1], [12, .5], [58, 1.7], [104, .3], [150, 1.4], [200, .8], [246, 2]];
-const ray = (a: number, d: number) => { const r = (a * Math.PI) / 180, c = Math.cos(r), s = Math.sin(r); return `--ex:${(50 + c * 50).toFixed(1)}%;--ey:${(50 + s * 50).toFixed(1)}%;--ox:${(50 + c * 78).toFixed(1)}%;--oy:${(50 + s * 95).toFixed(1)}%;--dx:${(c * 26).toFixed(1)}px;--dy:${(s * 26).toFixed(1)}px;--d:${d}s`; };
-const FX_HOT = '<span class="fx fx-hot" aria-hidden="true"><b></b>' + RAYS.map(([a, d]) => `<i style="${ray(a, d)}"></i>`).join("") + "</span>";
-const FX_FROST = '<span class="fx fx-frost" aria-hidden="true"><b></b>' + RAYS.map(([a, d]) => `<i style="${ray(a + 22, d * 1.4)}"></i>`).join("") + "</span>";
-/** Adds or removes one particle layer so a redraw never restarts its animation. */
-function fx(d: HTMLElement, cls: string, html: string, on: boolean) {
-  const el = d.querySelector(":scope > ." + cls);
-  if (on && !el) d.insertAdjacentHTML("beforeend", html);
-  else if (!on) el?.remove();
-}
-const coldIn = (n: WNode, warm: Set<string>) => warm.size > 0 && n.tier === "element" && n.kind !== "tool" && !warm.has(n.id) && isLive(n);
 const featTokens = (f: WNode) => N.filter((e) => e.tier === "element" && e.of[0] === f.id).reduce((s, e) => s + e.tokens, 0);
-const threadPreset = (session: string) => {
-  const id = S?.map.assign[session] ?? S?.map.settings.defaultPreset;
-  return S?.map.presets.find((p) => p.id === id) ?? S?.map.presets[0];
-};
 
 // ---------- Build and draw ----------
 const ACT = '<span class="act" aria-live="polite"><canvas width="32" height="32" aria-hidden="true"></canvas><span class="lbl"></span><span class="sec"></span></span>';
 
 function metaPath(n: WNode) {
   if (n.kind === "tool") return n.command ?? "";
-  if (n.tier === "feature") return n.custom ? "New feature" : n.paths[0] ?? "project root";
+  if (n.tier === "feature") return n.paths[0] ?? "project root";
   return n.paths.join(" · ") || "no files";
 }
 
@@ -170,111 +138,58 @@ function draw() {
   for (const [p, c] of edges()) {
     const a = byId.get(p), b = byId.get(c);
     if (!a || !b) continue;
-    const live = isLive(a) && isLive(b);
-    const hit = document.createElementNS(NS, "path");
-    hit.setAttribute("d", curve(a, b));
-    hit.setAttribute("class", "hit");
-    hit.addEventListener("click", (e) => { e.stopPropagation(); toggle(c); });
     const path = document.createElementNS(NS, "path");
     path.setAttribute("d", curve(a, b));
-    path.setAttribute("class", "cord " + (live ? "live" : "off"));
-    gC.append(hit, path);
+    path.setAttribute("class", "cord " + (inArea(a) && inArea(b) ? "live" : "off"));
+    gC.append(path);
     cords[p + ">" + c] = path;
   }
-  const warm = warmIds(), hot = hotIds(), due = dueIds(), frost = frozenIds();
-  if (showDue && !due.size) showDue = false;
-  world.classList.toggle("show-due", showDue);
   for (const n of N) {
     const d = els[n.id];
     if (!d) continue;
-    const live = isLive(n);
+    const on = inArea(n);
     d.style.left = n.x + "px";
     d.style.top = n.y + "px";
-    d.classList.toggle("live", live);
-    d.classList.toggle("off", !live);
-    d.classList.toggle("warm", warm.has(n.id));
-    d.classList.toggle("cold", coldIn(n, warm));
-    d.classList.toggle("due", due.has(n.id));
-    d.classList.toggle("asleep", asleep(n));
-    d.classList.toggle("frozen", frost.has(n.id));
-    fx(d, "fx-frost", FX_FROST, frost.has(n.id));
-    d.classList.toggle("hot", hot.has(n.id));
-    fx(d, "fx-hot", FX_HOT, hot.has(n.id));
+    d.classList.toggle("live", on);
+    d.classList.toggle("off", !on);
     d.classList.toggle("sel", selected === n.id);
     d.classList.toggle("match", hits.has(n.id));
-    setsFor(n, d);
+    const box = d.querySelector<HTMLElement>(".sets")!, a = n.tier === "core" ? undefined : areaOfNode(n);
+    const html = a ? `<i class="${a.id === A ? "cur" : ""}" style="--c:${colorOf(a)}"></i>` : "";
+    if (box.dataset.h !== html) { box.innerHTML = html; box.dataset.h = html; box.title = a?.name ?? ""; }
   }
   drawHull();
-  meter();
-}
-
-/** One small box per preset that uses this node; the selected preset's box is outlined. */
-function setsFor(n: WNode, d: HTMLElement) {
-  const using = S!.map.presets.filter((p) => liveIn(p, n));
-  const html = using.map((p) => `<i class="${p.id === preset().id ? "cur" : ""}" style="--c:${esc(p.color)}"></i>`).join("");
-  const box = d.querySelector<HTMLElement>(".sets")!;
-  if (box.dataset.h !== html) { box.innerHTML = html; box.dataset.h = html; box.title = using.map((p) => p.name).join(", "); }
+  header();
 }
 
 function drawHull() {
   gH.innerHTML = "";
-  const pts: [number, number][] = [[-120, -50], [120, -50], [-120, 50], [120, 50]];
+  const a = area();
+  if (!a) return;
+  const pts: [number, number][] = [];
   for (const n of N) {
-    if (n.tier === "core" || !isLive(n)) continue;
+    if (n.tier === "core" || !inArea(n, a)) continue;
     const w = n.tier === "feature" ? 104 : 94;
     pts.push([n.x - w, n.y - 36], [n.x + w, n.y - 36], [n.x - w, n.y + 36], [n.x + w, n.y + 36]);
   }
   const h = hull(pts);
   if (h.length < 3) return;
-  const a = document.createElementNS(NS, "path");
-  a.setAttribute("d", "M" + h.map((p) => p.join(",")).join("L") + "Z");
-  a.setAttribute("class", "hull");
-  gH.append(a);
+  const p = document.createElementNS(NS, "path");
+  p.setAttribute("d", "M" + h.map((x) => x.join(",")).join("L") + "Z");
+  p.setAttribute("class", "hull");
+  gH.append(p);
 }
 
-/** One bar for the whole project: warm, cold (attached, rarely used) and detached, left to right. */
-function meter() {
-  const live = N.filter((n) => n.tier !== "feature" && isLive(n)).reduce((s, n) => s + n.tokens, 0);
-  const all = N.reduce((s, n) => s + n.tokens, 0) || 1;
-  const exact = S!.tokens.mode === "exact" && N.every((n) => n.tier === "feature" || n.kind === "tool" || n.exact);
-  const warm = warmIds(), due = dueIds();
-  const sum = (ids: Set<string>) => N.filter((n) => ids.has(n.id)).reduce((s, n) => s + n.tokens, 0);
-  const hot = sum(warm), late = sum(due), cold = Math.max(0, live - hot - late);
-  const sleeping = N.filter((n) => asleep(n)).length;
-  const t = (v: number) => (exact ? "" : "~") + fmt(v);
-  $("mview").textContent = preset().name;
-  $("tok").textContent = warm.size ? ` · ${t(hot)} warm / ${fmt(live)} attached` : ` · ${t(live)} attached`;
-  $("sWarm").style.width = (hot / all) * 100 + "%";
-  $("sCold").style.width = (cold / all) * 100 + "%";
-  $("sDue").style.width = (late / all) * 100 + "%";
-  $("sDet").style.width = ((all - live) / all) * 100 + "%";
-  $("meter").title = [
-    warm.size ? `Warm: ${t(hot)} tokens in ${warm.size} files. Threads start here.` : "Warm: nothing yet. Files warm up as Claude reads and edits them.",
-    `Cold: ${t(cold)} tokens. Attached, opened only when needed.`,
-    `Overdue: ${due.size ? `${t(late)} tokens in ${due.size} files with no read or edit in 14 days.` : "none. Files become overdue after 14 days without a read or edit."}`,
-    `Detached: ${t(all - live)} tokens${sleeping ? `, ${sleeping} of them asleep` : ""}.`,
-    exact ? "Exact counts." : "Estimated counts (file size ÷ 4).",
-  ].join("\n");
-  const btn = $("dueBtn");
-  btn.hidden = !due.size;
-  btn.textContent = `${due.size} overdue`;
-  btn.title = showDue ? "Stop highlighting overdue files" : "Highlight overdue files on the map";
-  btn.setAttribute("aria-pressed", String(showDue));
+/** One bar for the project: each area's share of the mapped tokens, in its colour. */
+function header() {
+  const all = N.reduce((s, n) => s + n.tokens, 0) || 1, a = area();
+  $("mview").textContent = a ? a.name : "All areas";
+  $("tok").textContent = a ? ` · ~${fmt(a.tokens)} of ~${fmt(all)}` : ` · ~${fmt(all)} mapped`;
+  $("mbar").innerHTML = S!.areas.map((x) => `<i class="seg" style="width:${(x.tokens / all) * 100}%;background:${colorOf(x)};opacity:${!a || x.id === a.id ? 1 : 0.25}"></i>`).join("");
+  $("meter").title = "Each area's share of the project's estimated tokens (file size ÷ 4).";
 }
-$("dueBtn").onclick = () => { showDue = !showDue; draw(); };
 
 // ---------- Interaction ----------
-async function toggle(id: string) {
-  const n = byId.get(id);
-  if (!n || n.tier === "core") return;
-  const was = isLive(n);
-  if (was && isBase(preset())) return toast(BASE_NOTE);
-  try {
-    await api("/api/toggle", { preset: preset().id, node: id });
-    log(was ? "Detach" : "Attach", id, "you");
-  } catch (e) { toast((e as Error).message); }
-}
-
 function bindNode(d: HTMLDivElement, n: Node) {
   d.addEventListener("pointerdown", (e) => {
     if ((e.target as HTMLElement).closest("button,input,select")) return;
@@ -301,67 +216,22 @@ function bindNode(d: HTMLDivElement, n: Node) {
   d.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selected = n.id; draw(); inspect(); } });
 }
 
-/** Warm, cold or hot for an attached file, with its score, by the same fixed rules as the server. */
-function heatState(n: WNode): string {
-  if (n.tier !== "element" || n.kind === "tool") return "";
-  const score = S!.heat[n.id] ?? 0, at = score ? ` · score ${score}` : "";
-  if (!isLive(n)) return "Detached";
-  if (hotIds().has(n.id)) return `Hot${at}`;
-  if (warmIds().has(n.id)) return `Warm${at}`;
-  return S!.map.settings.warmCold ? `Cold${at || " · not used yet"}` : `Off${at}`;
-}
-
-let renaming = false;
 function inspect() {
   const box = $("insp");
   const n = selected ? byId.get(selected) : undefined;
-  // A live update must not wipe a name being typed.
-  if (renaming && document.activeElement?.id === "rnName") return;
   box.hidden = !n || !S;
-  if (!n || !S) { renaming = false; return; }
-  const live = isLive(n);
+  if (!n || !S) return;
   const parents = n.of.map((p) => byId.get(p)?.label ?? p).join(", ");
   const kids = n.tier === "feature" ? N.filter((e) => e.of.includes(n.id)).length : 0;
   const tok = n.tier === "feature" ? featTokens(n) : n.tokens;
-  const others = S.map.presets.filter((p) => p.id !== preset().id && !isBase(p));
-  const heatTxt = heatState(n);
-  const canToggle = n.tier !== "core" && !(live && isBase(preset()));
+  const a = n.tier === "core" ? undefined : areaOfNode(n);
   box.innerHTML = `<div class="ihead"><h2 class="cap">${KIND[n.kind].tag} node</h2><button class="x" id="ix" aria-label="Close">×</button></div>
-    ${renaming ? `<div class="prow"><input id="rnName" value="${esc(n.label)}" aria-label="Node name"><button class="btn fill" id="rnSave">Save</button><button class="btn" id="rnCancel">Cancel</button></div>` : `<b class="iname">${esc(n.label)}</b>`}
+    <b class="iname">${esc(n.label)}</b>
     <dl><dt>Path</dt><dd>${esc(metaPath(n))}</dd>
-    ${tok ? `<dt>Tokens</dt><dd>~${fmt(tok)}${n.exact ? " (exact)" : " (estimate)"}</dd>` : ""}
+    ${tok ? `<dt>Tokens</dt><dd>~${fmt(tok)} (estimate)</dd>` : ""}
     ${parents ? `<dt>Used by</dt><dd>${esc(parents)}</dd>` : ""}${kids ? `<dt>Elements</dt><dd>${kids}</dd>` : ""}
-    <dt>State</dt><dd>${live ? `Attached in ${esc(preset().name)}` : "Detached"}</dd>
-    ${frozenIds().has(n.id) ? `<dt>Frozen</dt><dd><span class="heat frozen">For ${esc(threadLabel(S.threads.find((t) => t.id === selThread)!))}</span></dd>` : ""}
-    ${heatTxt ? `<dt>Heat</dt><dd><span class="heat ${heatTxt.split(" ")[0].toLowerCase()}">${esc(heatTxt)}</span></dd>` : ""}</dl>
-    <div class="actions">${canToggle ? `<button class="btn" id="tg">${live ? "Detach" : "Reattach"}</button>` : ""}${renaming ? "" : '<button class="btn" id="rn">Rename</button>'}</div>
-    ${n.kind === "design" ? `<span class="cap">New feature from this design</span>
-      <input id="spinName" placeholder="Feature name" aria-label="Feature name">
-      <label class="cap" for="bring">Bring a saved preset</label>
-      <select id="bring"><option value="">None</option>${others.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("")}</select>
-      <div class="actions"><button class="btn fill" id="spin">New feature from this</button></div>` : ""}`;
-  box.querySelector("#ix")!.addEventListener("click", () => { selected = null; renaming = false; draw(); inspect(); });
-  box.querySelector("#tg")?.addEventListener("click", () => toggle(n.id));
-  box.querySelector("#rn")?.addEventListener("click", () => { renaming = true; inspect(); box.querySelector<HTMLInputElement>("#rnName")?.select(); });
-  const rnInput = box.querySelector<HTMLInputElement>("#rnName");
-  const rnSave = async () => {
-    const label = rnInput!.value.trim();
-    renaming = false;
-    if (label && label !== n.label) await api("/api/rename", { node: n.id, label }).catch((e) => toast(e.message));
-    inspect();
-  };
-  box.querySelector("#rnSave")?.addEventListener("click", rnSave);
-  box.querySelector("#rnCancel")?.addEventListener("click", () => { renaming = false; inspect(); });
-  rnInput?.addEventListener("keydown", (e) => { if (e.key === "Enter") rnSave(); if (e.key === "Escape") { renaming = false; inspect(); } });
-  box.querySelector("#spin")?.addEventListener("click", async () => {
-    const name = (box.querySelector("#spinName") as HTMLInputElement).value.trim() || "New feature";
-    const bring = (box.querySelector("#bring") as HTMLSelectElement).value;
-    try {
-      const f = await api("/api/spin", { preset: preset().id, design: n.id, name, bring });
-      selected = f.id;
-      log("Attach", null, `you · started ${name}`);
-    } catch (e) { toast((e as Error).message); }
-  });
+    ${n.tier === "core" ? "<dt>Area</dt><dd>Every thread sees the core</dd>" : a ? `<dt>Area</dt><dd>${esc(a.name)}</dd><dt>Subagent</dt><dd>${a.hasAgent ? `<code>${esc(a.agent)}</code>` : "None (small area)"}</dd>` : ""}</dl>`;
+  box.querySelector("#ix")!.addEventListener("click", () => { selected = null; draw(); inspect(); });
 }
 
 // ---------- Pan and zoom ----------
@@ -375,9 +245,8 @@ function fit() {
   if (!N.length) return;
   const xs = N.map((n) => n.x), ys = N.map((n) => n.y), r = stage.getBoundingClientRect();
   const w = Math.max(...xs) - Math.min(...xs) + 320, h = Math.max(...ys) - Math.min(...ys) + 240;
-  const left = 0, W = r.width;
-  view.s = Math.min(W / w, r.height / h, 1.1);
-  view.x = left + W / 2 - ((Math.max(...xs) + Math.min(...xs)) / 2) * view.s;
+  view.s = Math.min(r.width / w, r.height / h, 1.1);
+  view.x = r.width / 2 - ((Math.max(...xs) + Math.min(...xs)) / 2) * view.s;
   view.y = r.height / 2 + 24 - ((Math.max(...ys) + Math.min(...ys)) / 2) * view.s;
   applyView();
 }
@@ -391,7 +260,7 @@ function zoomAt(f: number, cx: number, cy: number) {
 stage.addEventListener("wheel", (e) => { e.preventDefault(); const r = stage.getBoundingClientRect(); zoomAt(Math.exp(-e.deltaY * 0.0015), e.clientX - r.left, e.clientY - r.top); }, { passive: false });
 stage.addEventListener("pointerdown", (e) => {
   const t = e.target as Element;
-  if (t.closest("button,input,select,.editing,.zoom") || t.classList.contains("hit")) return;
+  if (t.closest("button,input,select,.zoom")) return;
   const sx = e.clientX - view.x, sy = e.clientY - view.y;
   stage.classList.add("panning");
   stage.setPointerCapture(e.pointerId);
@@ -405,50 +274,55 @@ $("zin").onclick = () => zoomAt(1.25, ...center());
 $("zout").onclick = () => zoomAt(0.8, ...center());
 $("zfit").onclick = fit;
 
-// ---------- Context: the default view, saved presets and the threads on each ----------
+// ---------- Areas and threads ----------
 const working = (session: string) => [...active.values()].some((a) => a.session === session) || Date.now() - (S?.threads.find((t) => t.id === session)?.lastSeen ?? 0) < 60_000;
-const tokOf = (p: Preset) => N.filter((n) => n.tier !== "feature" && liveIn(p, n)).reduce((s, n) => s + n.tokens, 0);
 /** What a thread is doing right now, for its orb. */
 const threadVerb = (session: string): Verb | undefined => [...active.values()].filter((a) => a.session === session).sort((a, b) => b.start - a.start)[0]?.verb;
-let editing: "copy" | "rename" | null = null;
-/** The thread whose name is being typed; a live update must not wipe it. */
-let naming: string | null = null;
 
+function renderAreas() {
+  if (!S) return;
+  const box = $("alist");
+  box.innerHTML = "";
+  for (const a of S.areas) {
+    const li = document.createElement("li"), b = document.createElement("button");
+    li.className = a.id === A ? "cur" : "";
+    b.className = "pick";
+    b.setAttribute("aria-pressed", String(a.id === A));
+    b.title = [`Folders: ${a.folders.join(", ") || "root files"}`, a.files.length ? `Most used: ${a.files.join(", ")}` : "",
+      a.from === "usage" ? `${a.threads} thread${a.threads === 1 ? "" : "s"} worked here.` : "No thread has worked here yet, so this is just a folder.",
+      a.hasAgent ? `Subagent: ${a.agent}` : "Too small for its own subagent."].filter(Boolean).join("\n");
+    b.innerHTML = `<span class="dot" style="background:${colorOf(a)}"></span><b>${esc(a.name)}</b>${a.hasAgent ? `<span class="def">${esc(a.agent)}</span>` : ""}<em>${fmt(a.tokens)}</em>`;
+    b.onclick = () => { A = A === a.id ? "" : a.id; store.set("weave.area", A); selected = null; renderAll(); };
+    li.appendChild(b);
+    box.appendChild(li);
+  }
+  if (!S.areas.length) box.innerHTML = '<li class="empty">No areas yet. Run `weave scan` in the project folder.</li>';
+}
+
+const ICON_END = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"/></svg>';
 /** Threads seen in the last day get a row; older ones fold under "older". */
 const RECENT = 864e5;
 let showOld = false;
-const ICON_NEW = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 2.5h4v4M13.5 2.5 8 8M6.5 3.5h-3a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-3"/></svg>';
-const ICON_END = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"/></svg>';
-const ICON_MOVE ='<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6.5 8 10.5l4-4"/></svg>';
+/** The thread whose name is being typed; a live update must not wipe it. */
+let naming: string | null = null;
 
-/**
- * One line per thread: what it is doing, its name, how full its context is,
- * and, while it is working past the amber warning, a button that copies a
- * start line for a new thread. Everything else lives in tooltips.
- */
-function threadRow(t: Thread, p: Preset): HTMLLIElement {
+/** One line per thread: what it is doing, its name, how full its window is, and the meter's advice. */
+function threadRow(t: Thread): HTMLLIElement {
   const li = document.createElement("li");
-  const verb = threadVerb(t.id), name = threadLabel(t), live = working(t.id);
-  const ctx = t.context?.level ?? "ok", frost = S!.map.settings.freeze ? t.frozen?.length ?? 0 : 0;
-  const st = S!.map.settings, tok = t.contextTokens ?? 0;
-  li.className = "thread" + (verb ? " busy" : live ? " live" : "") + ` ctx-${ctx}` + (t.id === selThread ? " sel" : "");
-  li.style.setProperty("--c", p.color);
-  li.style.setProperty("--fill", String(Math.min(1, tok / st.freshAt)));
+  const verb = threadVerb(t.id), name = threadLabel(t), live = working(t.id), m = t.meter, tok = m.tokens ?? 0;
+  const level = m.level === "clear" || m.level === "compact" ? "ctx-full" : m.level === "delegate" ? "ctx-heavy" : "ctx-ok";
+  li.className = "thread" + (verb ? " busy" : live ? " live" : "") + ` ${level}`;
+  li.style.setProperty("--c", "var(--p-violet)");
+  li.style.setProperty("--fill", String(Math.min(1, m.share)));
   const state = verb ? VERB_ING[verb] : live ? "Working" : `Idle since ${new Date(t.lastSeen).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-  const meter = tok ? `${fmt(tok)} tokens in context. Amber from ${fmt(st.heavyAt)}, red from ${fmt(st.freshAt)}.` : "Context size not read yet.";
-  const tip = `${name}\n${state}. ${meter}${frost ? `\n${frost} file${frost === 1 ? "" : "s"} frozen.` : ""}\nClick to show its frozen files on the map. Double-click to rename.`;
-  // Only a thread that is working gets the hand-off button; an idle thread's red bar says enough.
-  const h = live ? t.next : undefined;
-  const hTip = !h ? "" : h.preset ? `New thread on ${h.preset.name}: copies a start line. ${h.preset.name} holds ${Math.round(h.preset.share * 100)}% of what this thread used, ~${fmt(h.preset.tokens)} tokens.`
-    : h.save ? `New thread: no saved preset fits under ${fmt(st.heavyAt)}, so this saves its ${h.save.files} warm files as "${h.save.name}" and copies a start line.` : "";
+  const size = tok ? `${fmt(tok)} of ${fmt(m.window)} tokens (${Math.round(m.share * 100)}%).${m.stale ? ` ~${fmt(m.stale)} of it is files it moved on from.` : ""}` : "Context size not read yet.";
+  const tip = `${name}\n${state}. ${size}${m.text ? `\n${m.text}` : ""}\nDouble-click to rename.`;
   li.innerHTML = `<span class="ticon"><canvas class="orb" width="32" height="32" data-session="${esc(t.id)}" aria-hidden="true"></canvas><i></i></span>`
-    + `<button class="tmain" aria-pressed="${t.id === selThread}" title="${esc(tip)}">${esc(name)}</button>`
-    + `<span class="tbar" title="${esc(meter)}"><i></i><small>${tok ? fmt(tok).replace(/\.\dk$/, "k") : ""}</small></span>`
-    + (hTip ? `<button class="ibtn new" title="${esc(hTip)}" aria-label="${esc(hTip)}">${ICON_NEW}</button>` : "<span hidden></span>")
-    + `<label class="ibtn move" title="Move to another preset">${ICON_MOVE}<select aria-label="Preset for ${esc(name)}">${S!.map.presets.map((x) => `<option value="${esc(x.id)}" ${x.id === t.preset ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>`
-    + `<button class="ibtn end" title="End thread: clear it from the map. ${esc(p.name)} keeps what it learned." aria-label="End thread ${esc(name)}">${ICON_END}</button>`;
-  const main =li.querySelector<HTMLButtonElement>(".tmain")!;
-  main.addEventListener("click", (e) => { if (e.detail > 1) return; selThread = selThread === t.id ? null : t.id; store.set("weave.thread", selThread ?? ""); renderAll(); });
+    + `<button class="tmain" title="${esc(tip)}">${esc(name)}</button>`
+    + `<span class="tbar" title="${esc(size)}"><i></i><small>${tok ? fmt(tok).replace(/\.\dk$/, "k") : ""}</small></span>`
+    + (LEVEL[m.level] ? `<span class="advice" title="${esc(m.text ?? "")}">${esc(LEVEL[m.level])}</span>` : "<span hidden></span>")
+    + `<button class="ibtn end" title="End thread: clear it from the map. Areas keep what it taught them." aria-label="End thread ${esc(name)}">${ICON_END}</button>`;
+  const main = li.querySelector<HTMLButtonElement>(".tmain")!;
   main.addEventListener("dblclick", () => {
     naming = t.id;
     const input = Object.assign(document.createElement("input"), { className: "tname", value: name, maxLength: 80 });
@@ -461,143 +335,39 @@ function threadRow(t: Thread, p: Preset): HTMLLIElement {
       naming = null;
       const v = input.value.trim();
       if (save && v && v !== name) api("/api/threads/rename", { thread: t.id, name: v }).catch((err) => toast(err.message));
-      else renderPresets();
+      else renderThreads();
     };
     input.addEventListener("keydown", (e) => { if (e.key === "Enter") end(true); if (e.key === "Escape") end(false); });
     input.addEventListener("blur", () => end(true));
   });
-  li.querySelector("select")!.addEventListener("change", (e) => api("/api/assign", { thread: t.id, preset: (e.target as HTMLSelectElement).value }).catch((err) => toast(err.message)));
   li.querySelector(".ibtn.end")!.addEventListener("click", () => {
-    if (selThread === t.id) { selThread = null; store.set("weave.thread", ""); }
-    api("/api/threads/end", { thread: t.id }).then(() => toast(`Thread cleared. ${p.name} keeps what it learned.`)).catch((e) => toast(e.message));
-  });
-  const done = (line: string, preset: string) => copy(line).then(() => toast(`Start line copied. Paste it into a new thread to start on ${preset}.`));
-  li.querySelector<HTMLButtonElement>(".ibtn.new")?.addEventListener("click", () => {
-    if (h?.preset && h.line) done(h.line, h.preset.name);
-    else api("/api/presets/fromThread", { thread: t.id }).then((r) => done(r.line, r.preset.name)).catch((e) => toast(e.message));
+    api("/api/threads/end", { thread: t.id }).then(() => toast("Thread cleared. Areas keep what it taught them.")).catch((e) => toast(e.message));
   });
   return li;
 }
 
-async function copy(text: string) {
-  try { await navigator.clipboard.writeText(text); }
-  catch {
-    // Clipboard access can be refused outside a secure context; a selected textarea still copies.
-    const ta = Object.assign(document.createElement("textarea"), { value: text });
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand("copy");
-    ta.remove();
-  }
-}
-
-function renderPresets() {
+function renderThreads() {
   if (!S) return;
-  // A live update must not close a dropdown someone is using.
-  if ((document.activeElement as HTMLElement | null)?.closest?.("#plist select, #plist .tname")) return;
-  const box = $("plist");
+  if (naming && document.activeElement?.closest?.("#tlist .tname")) return;
+  const box = $("tlist");
   box.innerHTML = "";
-  // In use: a thread on it is working right now. In-use presets are pinned to the top and pulse, then the default view, then the rest.
-  const inUse = (p: Preset) => S!.threads.some((t) => t.preset === p.id && working(t.id));
-  const ordered = [...S.map.presets].sort((a, b) => Number(inUse(b)) - Number(inUse(a)) || Number(isBase(b)) - Number(isBase(a)));
   const recent = (t: Thread) => working(t.id) || Date.now() - t.lastSeen < RECENT;
-  for (const p of ordered) {
-    const base = isBase(p), li = document.createElement("li"), b = document.createElement("button");
-    li.className = "preset" + (p.id === preset().id ? " cur" : "") + (inUse(p) ? " inuse" : "");
-    b.className = "pick";
-    b.setAttribute("aria-pressed", String(p.id === preset().id));
-    const feats = p.features.map((f) => byId.get(f)?.label ?? f);
-    b.title = base ? "Every file attached. Threads without a preset use this." : `Features: ${feats.join(", ")}${p.asleep?.length ? `. ${p.asleep.length} asleep.` : ""}`;
-    b.innerHTML = `<span class="dot" style="background:${esc(p.color)}"></span><b>${esc(p.name)}</b>${base ? '<span class="def">Default</span>' : ""}<em>${fmt(tokOf(p))}</em>`;
-    b.onclick = () => { P = p.id; store.set("weave.preset", P); selected = null; editing = null; renderAll(); };
-    li.appendChild(b);
-    if (inUse(p)) li.insertAdjacentHTML("beforeend", FX_HOT);
-    const users = S.threads.filter((t) => t.preset === p.id && (showOld || recent(t))).sort((x, y) => Number(working(y.id)) - Number(working(x.id)) || y.lastSeen - x.lastSeen);
-    if (users.length) {
-      const ul = document.createElement("ul");
-      ul.className = "tlist";
-      ul.setAttribute("aria-label", `Threads on ${p.name}`);
-      users.forEach((t) => ul.appendChild(threadRow(t, p)));
-      li.appendChild(ul);
-    }
-    box.appendChild(li);
-  }
+  const list = S.threads.filter((t) => showOld || recent(t)).sort((x, y) => Number(working(y.id)) - Number(working(x.id)) || y.lastSeen - x.lastSeen);
+  list.forEach((t) => box.appendChild(threadRow(t)));
   const old = S.threads.filter((t) => !recent(t)).length;
   if (old) {
     const more = document.createElement("li");
     more.className = "older";
-    more.innerHTML = `<button class="fold">${showOld ? "Hide" : "Show"} ${old} older thread${old === 1 ? "" : "s"}</button><button class="clear" title="Clear every thread idle for over a day. Presets keep what they learned.">Clear</button>`;
-    more.querySelector<HTMLButtonElement>(".fold")!.onclick = () => { showOld = !showOld; renderPresets(); };
+    more.innerHTML = `<button class="fold">${showOld ? "Hide" : "Show"} ${old} older thread${old === 1 ? "" : "s"}</button><button class="clear" title="Clear every thread idle for over a day.">Clear</button>`;
+    more.querySelector<HTMLButtonElement>(".fold")!.onclick = () => { showOld = !showOld; renderThreads(); };
     more.querySelector<HTMLButtonElement>(".clear")!.onclick = () => api("/api/threads/end", { older: true }).then((n) => toast(`Cleared ${n} older thread${n === 1 ? "" : "s"}.`)).catch((e) => toast(e.message));
     box.appendChild(more);
   }
-  if (!S.threads.length) box.insertAdjacentHTML("beforeend", '<li class="empty">No threads yet. They appear here once Claude Code runs in this project with the WEAVE hooks.</li>');
-  renderPresetActions();
+  if (!S.threads.length) box.innerHTML = '<li class="empty">No threads yet. They appear here once Claude Code runs in this project with the WEAVE hooks.</li>';
 }
 
-function renderPresetActions() {
-  const row = $("pactions"), p = preset();
-  // A live update must not wipe a name being typed.
-  if (editing && document.activeElement?.id === "pname") return;
-  if (editing) {
-    row.innerHTML = `<input id="pname" value="${editing === "rename" ? esc(p.name) : ""}" placeholder="${editing === "copy" ? `Name for a copy of ${esc(p.name)}` : "Preset name"}" aria-label="Preset name"><button class="btn fill" id="psave">Save</button><button class="btn" id="pcancel">Cancel</button>`;
-    const input = row.querySelector<HTMLInputElement>("#pname")!;
-    input.focus();
-    const save = async () => {
-      const name = input.value.trim();
-      if (!name) return;
-      try {
-        if (editing === "copy") { const np = await api("/api/presets/create", { name, copyFrom: p.id }); P = np.id; store.set("weave.preset", P); }
-        else await api("/api/presets/rename", { id: p.id, name });
-        editing = null;
-        renderPresetActions();
-      } catch (e) { toast((e as Error).message); }
-    };
-    row.querySelector("#psave")!.addEventListener("click", save);
-    input.addEventListener("keydown", (e) => { if (e.key === "Enter") save(); if (e.key === "Escape") { editing = null; renderPresetActions(); } });
-    row.querySelector("#pcancel")!.addEventListener("click", () => { editing = null; renderPresetActions(); });
-    return;
-  }
-  const custom = !isBase(p);
-  row.innerHTML = `<button class="btn fill" id="pheat" title="Make a preset from the files that are warm right now. It gets the next crystal name and a tag for what it holds.">Save warm files as preset</button>`
-    + (custom ? '<button class="btn" id="pren">Rename</button><button class="btn" id="pcopy">Duplicate</button><button class="btn" id="pdel">Delete</button>' : "");
-  row.querySelector("#pheat")!.addEventListener("click", async () => {
-    try {
-      const np = await api("/api/presets/fromHeat");
-      P = np.id;
-      store.set("weave.preset", P);
-      selected = null;
-      renderAll();
-      toast(`Saved "${np.name}": its warm files are attached, everything else in those folders is detached.`);
-    } catch (e) { toast((e as Error).message); }
-  });
-  row.querySelector("#pren")?.addEventListener("click", () => { editing = "rename"; renderPresetActions(); });
-  row.querySelector("#pcopy")?.addEventListener("click", () => { editing = "copy"; renderPresetActions(); });
-  row.querySelector("#pdel")?.addEventListener("click", () => {
-    if (confirm(`Delete the preset "${p.name}"? Threads on it go back to ${S!.map.presets.find(isBase)?.name ?? "the default view"}.`)) api("/api/presets/delete", { id: p.id }).catch((e) => toast(e.message));
-  });
-}
-
-/** Shown on the map while a thread is selected: whose frozen files are frosted. */
-function renderFrost() {
-  const el = $("frost"), t = S?.threads.find((x) => x.id === selThread);
-  el.hidden = !t || !S!.map.settings.freeze;
-  if (el.hidden) return;
-  const n = frozenIds().size;
-  el.innerHTML = `<i></i><span>${n ? `<b>${n}</b> frozen for` : "Nothing frozen for"} <b>${esc(threadLabel(t!))}</b></span><button aria-label="Stop showing frozen files" title="Stop showing frozen files">×</button>`;
-  el.title = "Files this thread read or edited earlier, but not in its last 10 minutes or its last 2 messages. Fixed rules, no AI. Nothing is blocked; a file unfreezes when the thread uses it again.";
-  el.querySelector("button")!.onclick = () => { selThread = null; store.set("weave.thread", ""); renderAll(); };
-}
-
-/** Shown on the map while a saved preset is selected, since clicking a cord edits it. */
-function renderEditing() {
-  const el = $("editing"), p = preset();
-  el.hidden = isBase(p);
-  if (el.hidden) return;
-  el.style.setProperty("--c", p.color);
-  el.innerHTML = `<i></i><span>Editing <b>${esc(p.name)}</b></span><button aria-label="Back to the default view" title="Back to the default view">×</button>`;
-  el.querySelector("button")!.onclick = () => { P = S!.map.settings.defaultPreset; store.set("weave.preset", P); selected = null; editing = null; renderAll(); };
-}
+$("agents").onclick = () => api("/api/agents").then((r) => toast(`Subagents: ${r.written.length} written, ${r.removed.length} removed.`)).catch((e) => toast(e.message));
+$("rescan").onclick = () => api("/api/rescan").then(() => toast("Rescanned the project.")).catch((e) => toast(e.message));
 
 // ---------- Search ----------
 const qEl = $<HTMLInputElement>("q"), resEl = $("results");
@@ -652,81 +422,21 @@ qEl.addEventListener("keydown", (e) => {
 qEl.addEventListener("blur", () => setTimeout(() => (resEl.hidden = true), 100));
 qEl.addEventListener("focus", () => { if (qEl.value) resEl.hidden = false; });
 
-// ---------- Suggestions (fixed rules, computed by the server) ----------
-function renderSuggestions() {
-  if (!S) return;
-  // The default view keeps every file attached, so it is never offered a detach.
-  const list = (S.suggestions[preset().id] ?? []).filter((r) => r.attach || !isBase(preset()));
-  const due = N.filter((n) => dueIds().has(n.id)).sort((a, b) => b.tokens - a.tokens);
-  const p = $("suggestPanel");
-  p.hidden = !list.length && !due.length;
-  p.innerHTML = `<h2 class="cap">Suggestions <span style="opacity:.7">· fixed rules, no AI</span></h2>`;
-  if (due.length) {
-    const card = document.createElement("div");
-    card.className = "suggest due";
-    const total = due.reduce((s, n) => s + n.tokens, 0);
-    card.innerHTML = `<span class="cap">Rule · Overdue</span><p>${due.length === 1 ? "1 attached file has" : `${due.length} attached files have`} had no read or edit in 14 days (~${fmt(total)} tokens). Put ${due.length === 1 ? "it" : "them"} to sleep: detached and left out of the thread note, and woken the moment Claude reads or edits ${due.length === 1 ? "it" : "one"}.</p>`
-      + `<ul class="duelist">${due.slice(0, 5).map((n) => `<li><code title="${esc(n.paths[0] ?? n.label)}">${esc(n.paths[0] ?? n.label)}</code><span>~${fmt(n.tokens)}</span><button class="btn" data-id="${esc(n.id)}">Sleep</button></li>`).join("")}</ul>`
-      + `${due.length > 5 ? `<p class="note">and ${due.length - 5} more</p>` : ""}<div class="row"><button class="btn fill" id="sleepAll">Put ${due.length === 1 ? "it" : `all ${due.length}`} to sleep</button><button class="btn" id="showDue">${showDue ? "Hide on map" : "Show on map"}</button></div>`;
-    const put = (ids: string[]) => api("/api/sleep", { preset: preset().id, nodes: ids }).then(() => log("Sleep", ids.length === 1 ? ids[0] : null, ids.length === 1 ? "you" : `you · ${ids.length} files`)).catch((e) => toast(e.message));
-    card.querySelectorAll<HTMLButtonElement>(".duelist button").forEach((b) => (b.onclick = () => put([b.dataset.id!])));
-    card.querySelector<HTMLButtonElement>("#sleepAll")!.onclick = () => put(due.map((n) => n.id));
-    card.querySelector<HTMLButtonElement>("#showDue")!.onclick = () => { showDue = !showDue; draw(); renderSuggestions(); };
-    p.appendChild(card);
-  }
-  for (const r of list) {
-    const n = byId.get(r.node);
-    if (!n) continue;
-    const card = document.createElement("div");
-    card.className = "suggest";
-    card.innerHTML = `<span class="cap">Rule · ${esc(r.rule)}</span><p>${esc(r.text)}</p><p class="cap" style="letter-spacing:.08em">${n.tokens ? `${r.attach ? "Attach" : "Detach"} it: ${r.attach ? "adds" : "saves"} about ${fmt(n.tokens)} tokens.` : "Tools cost almost no tokens."}</p><div class="row"><button class="btn fill">${r.attach ? "Attach" : "Detach"}</button><button class="btn">Dismiss</button></div>`;
-    const [ok, no] = card.querySelectorAll("button");
-    ok.onclick = () => api("/api/suggestion", { preset: preset().id, key: r.key, node: r.node, attach: r.attach, action: "apply" }).then(() => log(r.attach ? "Attach" : "Detach", r.node, "rule")).catch((e) => toast(e.message));
-    no.onclick = () => api("/api/suggestion", { preset: preset().id, key: r.key, action: "dismiss" }).catch((e) => toast(e.message));
-    p.appendChild(card);
-  }
-}
-
 // ---------- Settings ----------
-function seg(id: string, value: string, onPick: (v: string) => void) {
-  document.querySelectorAll<HTMLButtonElement>(`#${id} button`).forEach((b) => {
-    b.setAttribute("aria-pressed", String(b.dataset.v === value));
-    b.onclick = () => onPick(b.dataset.v!);
-  });
-}
 function renderSettings() {
   if (!S) return;
   const st = S.map.settings;
-  $("auto").setAttribute("aria-checked", String(st.autoApply));
-  $("auto").onclick = () => api("/api/settings", { autoApply: !st.autoApply }).catch((e) => toast(e.message));
-  $("warmCold").setAttribute("aria-checked", String(st.warmCold));
-  $("warmCold").onclick = () => api("/api/settings", { warmCold: !st.warmCold }).catch((e) => toast(e.message));
-  $("freeze").setAttribute("aria-checked", String(st.freeze));
-  $("freeze").onclick = () => api("/api/settings", { freeze: !st.freeze }).catch((e) => toast(e.message));
-  $("autoCalibrate").setAttribute("aria-checked", String(st.autoCalibrate));
-  $("autoCalibrate").onclick = () => api("/api/settings", { autoCalibrate: !st.autoCalibrate }).catch((e) => toast(e.message));
-  for (const k of ["heavyAt", "freshAt"] as const) {
-    const input = $<HTMLInputElement>(k);
-    // A live update must not overwrite a number being typed.
-    if (document.activeElement !== input) input.value = String(Math.round(st[k] / 1000));
-    input.onchange = () => api("/api/settings", { [k]: Number(input.value) * 1000 }).catch((e) => toast(e.message));
-  }
-  seg("gate", st.gate, (v) => api("/api/settings", { gate: v }).catch((e) => toast(e.message)));
-  const t = S.tokens;
-  $("tokNote").textContent = t.mode === "exact"
-    ? `Exact counts${t.source === "environment" ? " (key from the ANTHROPIC_API_KEY variable)" : ""}.${t.counting ? ` Counting ${t.counting.done} of ${t.counting.total} files.` : ""}${t.error ? ` Last error: ${t.error}` : ""}`
-    : "Estimated counts (file size ÷ 4). Add a key for exact counts.";
-  $("keyRemove").hidden = t.source !== "saved";
+  $("meterOn").setAttribute("aria-checked", String(st.meter));
+  $("meterOn").onclick = () => api("/api/settings", { meter: !st.meter }).catch((e) => toast(e.message));
+  document.querySelectorAll<HTMLButtonElement>("#window button").forEach((b) => {
+    b.setAttribute("aria-pressed", String(Number(b.dataset.v) === st.window));
+    b.onclick = () => api("/api/settings", { window: Number(b.dataset.v) }).catch((e) => toast(e.message));
+  });
+  const input = $<HTMLInputElement>("compactAt");
+  // A live update must not overwrite a number being typed.
+  if (document.activeElement !== input) input.value = String(Math.round(st.compactAt * 100));
+  input.onchange = () => api("/api/settings", { compactAt: Number(input.value) / 100 }).catch((e) => toast(e.message));
 }
-$<HTMLFormElement>("keyForm").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const input = $<HTMLInputElement>("key");
-  const key = input.value.trim();
-  input.value = "";
-  if (!key) return;
-  try { await api("/api/key", { key }); } catch (err) { toast((err as Error).message); }
-});
-$("keyRemove").onclick = () => api("/api/key/delete").catch((e) => toast(e.message));
 
 // Settings live in a menu behind the gear in the top bar.
 const gear = $("gear"), menu = $("settings");
@@ -746,8 +456,8 @@ function setReduce() {
   document.documentElement.classList.toggle("still", reduce);
   $("anim").setAttribute("aria-checked", String(ANIM === "system"));
   $("animNote").textContent = reduce
-    ? "Your device asks apps to reduce motion, so signals and embers are paused."
-    : "Pause signals and embers when your device asks apps to reduce motion.";
+    ? "Your device asks apps to reduce motion, so signals are paused."
+    : "Pause signals when your device asks apps to reduce motion.";
 }
 sysReduce.addEventListener?.("change", setReduce);
 $("anim").onclick = () => { ANIM = ANIM === "system" ? "always" : "system"; store.set("weave.anim", ANIM); setReduce(); };
@@ -768,35 +478,22 @@ paintTheme();
 
 // ---------- Live activity ----------
 const feedEl = $("feed");
-/** History: one compact row per action, newest first. The file, the time, and a dot in the colour of the thread's preset. */
-/** History rows by activity id, so an action's end can fill in how long it took. */
-const rows = new Map<string, TreeItem[]>();
-function log(verb: string, id: string | null, who: string, path?: string, session?: string, t = Date.now(), opts: { act?: string; items?: TreeItem[] } = {}) {
-  const n = id ? byId.get(id) : undefined;
-  const li = document.createElement("li");
-  const what = n ? (n.tier === "element" && n.kind !== "tool" ? path ?? n.paths[0] ?? n.label : n.label) : "";
+/** History: one compact row per action, newest first. The file, the time, and a dot in the colour of its area. */
+function log(e: Activity) {
+  const n = byId.get(e.node);
+  if (!n) return;
+  const t = S?.threads.find((x) => x.id === e.s), who = (t ? threadLabel(t) : "claude") + (e.sub ? " · subagent" : "");
+  const what = n.tier === "element" && n.kind !== "tool" ? e.path ?? n.paths[0] ?? n.label : n.label;
   const file = what.split("/").pop() || what;
-  const color = session ? threadPreset(session)?.color : undefined;
-  const time = new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  // A drop-down per row: the still version of the Live tree, for what this action touched.
-  const items = opts.items ?? (id ? [{ id, verb, session, start: t }] : []);
-  li.innerHTML = `<button class="hrow" aria-expanded="false"${items.length ? "" : " disabled"}><svg class="chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 3 7.5 6l-3 3"/></svg>`
-    + `<span class="verb" style="--vc:${COLOR[verb] ?? "var(--line-2)"}">${esc(verb)}</span><code title="${esc(what || who)}">${esc(file || who)}</code><time>${time}</time><i class="who" style="--c:${color ?? "var(--line-2)"}" title="${esc(who)}"></i></button>`;
-  if (verb === "Blocked") li.classList.add("blocked");
-  if (opts.act) { rows.set(opts.act, items); if (rows.size > 100) rows.delete(rows.keys().next().value!); }
-  const btn = li.querySelector<HTMLButtonElement>(".hrow")!;
-  btn.onclick = () => {
-    const open = btn.getAttribute("aria-expanded") !== "true";
-    btn.setAttribute("aria-expanded", String(open));
-    li.querySelector(".live")?.remove();
-    if (open) li.insertAdjacentHTML("beforeend", `<div class="live mini">${tree(items, false)}<p class="note">${esc(who)} · ${new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</p></div>`);
-  };
+  const time = new Date(e.t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const li = document.createElement("li");
+  li.innerHTML = `<button class="hrow" disabled><span class="verb" style="--vc:${COLOR[e.verb] ?? "var(--line-2)"}">${esc(e.verb)}</span><code title="${esc(what)}">${esc(file)}</code><time>${time}</time><i class="who" style="--c:${colorOf(areaOfNode(n))}" title="${esc(who)}"></i></button>`;
   feedEl.querySelector(".empty")?.remove();
   feedEl.prepend(li);
   while (feedEl.children.length > 12) feedEl.lastChild!.remove();
 }
 
-interface Act { verb: Verb; color: string; start: number; until: number; session: string }
+interface Act { verb: Verb; start: number; until: number; session: string }
 const active = new Map<string, Act>();
 const edited = new Map<string, Set<string>>();
 
@@ -811,66 +508,50 @@ function paintActs() {
     d.classList.toggle("working", on);
     if (on && a) {
       const tab = d.querySelector(".act")!;
-      d.style.setProperty("--ac", a.color);
+      d.style.setProperty("--ac", COLOR[a.verb]);
       tab.querySelector(".lbl")!.textContent = VERB_ING[a.verb];
-      tab.querySelector(".sec")!.textContent = Math.max(0, Math.floor((now - a.start) / 1000)) + "s";
+      tab.querySelector(".sec")!.textContent = "";
     }
   }
   renderLive();
 }
 setInterval(paintActs, 250);
 
-/**
- * Live: what is running right now, as a folder tree that follows the same
- * route as the signals on the map, project → feature → file. Rebuilt only when
- * the set of running actions changes; the seconds tick in place.
- */
+/** Live: what threads touched in the last few seconds, as a folder tree that follows the route of the signals on the map. */
 let liveSig = "";
 function renderLive() {
   const box = $("live");
   const now = Date.now();
   const running = [...active.entries()].filter(([id, a]) => now <= a.until && byId.has(id)).sort((x, y) => x[1].start - y[1].start);
   const sig = running.map(([id, a]) => `${id}|${a.verb}|${a.session}`).join(";");
-  if (sig !== liveSig || !S) {
-    liveSig = sig;
-    if (!running.length || !S) { box.innerHTML = '<p class="empty">Nothing running right now.</p>'; return; }
-    box.innerHTML = tree(running.map(([id, a]) => ({ id, verb: a.verb, session: a.session, start: a.start })), true);
-  }
-  box.querySelectorAll<HTMLElement>("[data-start]").forEach((el) => (el.textContent = Math.max(0, Math.floor((now - Number(el.dataset.start)) / 1000)) + "s"));
+  if (sig === liveSig && S) return;
+  liveSig = sig;
+  if (!running.length || !S) { box.innerHTML = '<p class="empty">Nothing running right now.</p>'; return; }
+  box.innerHTML = tree(running.map(([id, a]) => ({ id, verb: a.verb, session: a.session })));
 }
 
-interface TreeItem { id: string; verb: string; session?: string; start: number; end?: number }
-/**
- * A folder tree of actions, built from each action's route: core, then the
- * feature it runs through, then the file. `live` ticks the seconds and draws
- * orbs; the History rows use the still version, with how long each action took.
- */
-function tree(items: TreeItem[], live: boolean): string {
+function tree(items: { id: string; verb: Verb; session: string }[]): string {
   if (!S || !byId.get("core")) return "";
-  interface Branch { id: string; label: string; color: string; kids: Map<string, Branch>; leaf?: TreeItem }
+  interface Branch { id: string; label: string; color: string; kids: Map<string, Branch>; leaf?: { verb: Verb; session: string } }
   const root: Branch = { id: "core", label: S.project, color: "", kids: new Map() };
   for (const a of items) {
     const n = byId.get(a.id);
     if (!n) continue;
-    const pr = (a.session && threadPreset(a.session)) || preset();
     let at = root;
-    for (const step of route(n, pr).map(([, to]) => to)) {
+    for (const step of route(n).map(([, to]) => to)) {
       if (!at.kids.has(step)) { const s = byId.get(step); at.kids.set(step, { id: step, label: s?.tier === "feature" ? (s.paths[0] ?? s.label) : s?.label ?? step, color: "", kids: new Map() }); }
       at = at.kids.get(step)!;
-      at.color ||= COLOR[a.verb] ?? "var(--line-2)";
+      at.color ||= COLOR[a.verb];
     }
-    at.leaf = a;
-    root.color ||= COLOR[a.verb] ?? "var(--line-2)";
+    at.leaf = { verb: a.verb, session: a.session };
+    root.color ||= COLOR[a.verb];
   }
   const paint = (b: Branch): string => {
     const kids = [...b.kids.values()].map((k) => `<li style="--vc:${k.color}">${paint(k)}</li>`).join("");
     const sub = kids ? `<ul>${kids}</ul>` : "";
     if (b.leaf) {
-      const l = b.leaf, t = l.session ? S!.threads.find((x) => x.id === l.session) : undefined, who = t ? threadLabel(t) : l.session ? "claude" : "you";
-      const icon = live ? `<canvas class="orb" width="32" height="32" data-verb="${esc(l.verb)}" data-node="${esc(b.id)}" aria-hidden="true"></canvas>` : `<i class="vdot" style="--vc:${COLOR[l.verb] ?? "var(--line-2)"}" aria-hidden="true"></i>`;
-      const took = live ? `<span data-start="${l.start}">0s</span>` : l.end ? `${Math.max(0, Math.round((l.end - l.start) / 1000))}s` : "";
-      const verb = live ? VERB_ING[l.verb as Verb] ?? l.verb : l.verb;
-      return `<span class="leaf">${icon}<b title="${esc(byId.get(b.id)?.paths[0] ?? b.label)}">${esc(b.label)}</b><small><span>${esc(verb)}</span>${took ? ` · ${took}` : ""}</small><i class="who" style="--c:${(l.session && threadPreset(l.session)?.color) || "var(--line-2)"}" title="${esc(who)}"></i></span>${sub}`;
+      const t = S!.threads.find((x) => x.id === b.leaf!.session), who = t ? threadLabel(t) : "claude";
+      return `<span class="leaf"><canvas class="orb" width="32" height="32" data-verb="${esc(b.leaf.verb)}" aria-hidden="true"></canvas><b title="${esc(byId.get(b.id)?.paths[0] ?? b.label)}">${esc(b.label)}</b><small><span>${esc(VERB_ING[b.leaf.verb])}</span></small><i class="who" style="--c:var(--line-2)" title="${esc(who)}"></i></span>${sub}`;
     }
     return `<span class="fold"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 4.5a1 1 0 0 1 1-1h3.6l1.4 1.5h6a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z"/></svg>${esc(b.label)}</span>${sub}`;
   };
@@ -889,7 +570,6 @@ function drawOrb(c: HTMLCanvasElement | null | undefined, verb: Verb, t: number 
 }
 function orbLoop(now: number) {
   active.forEach((a, id) => drawOrb(els[id]?.querySelector<HTMLCanvasElement>(".act canvas"), a.verb, now));
-  // Threads and the Live tree: the orb of what is running.
   document.querySelectorAll<HTMLCanvasElement>("canvas.orb").forEach((c) => {
     const v = c.dataset.session ? threadVerb(c.dataset.session) : (c.dataset.verb as Verb);
     if (v) drawOrb(c, v, now);
@@ -898,61 +578,36 @@ function orbLoop(now: number) {
 }
 requestAnimationFrame(orbLoop);
 
-function via(n: WNode, pr: Preset): string | undefined {
-  return n.of.find((f) => pr.features.includes(f) && byId.has(f)) ?? n.of.find((f) => byId.has(f));
-}
-function route(n: WNode, pr: Preset): [string, string][] {
+function route(n: WNode): [string, string][] {
   if (n.tier === "core") return [];
   if (n.tier === "feature") return [["core", n.id]];
-  const v = via(n, pr);
+  const v = n.of.find((f) => byId.has(f));
   return v ? [["core", v], [v, n.id]] : [["core", n.id]];
 }
 const back = (segs: [string, string][]) => segs.slice().reverse().map(([a, b]) => [a, b, true] as [string, string, boolean]);
 
 function onActivity(e: Activity, animate: boolean) {
+  // Logs from WEAVE 1 also hold "start" lines; every action has an end line.
+  if (e.ph === "start") return;
   const n = byId.get(e.node);
   if (!n || !S) return;
-  const pr = threadPreset(e.s) ?? preset();
-  const t = S.threads.find((x) => x.id === e.s), thread = t ? threadLabel(t) : undefined;
-  const who = e.blocked ? `${thread ?? "claude"} · blocked, told to ask you to reattach` : e.outside ? `${thread ?? "claude"} · outside window` : thread ?? "claude";
-  if (e.ph === "start" || e.blocked) {
-    // A PR row lists the files the thread edited for it.
-    const prFiles = e.verb === "PR" && !e.blocked ? [...(edited.get(e.s) ?? [])].map((id) => ({ id, verb: "Edit", session: e.s, start: e.t })) : [];
-    // Claude asking for a detached file is its own History entry: a request to reattach it, or the asleep file it woke.
-    const ask = e.blocked || n.kind === "tool" ? undefined : e.woke ? "Woke" : e.outside ? "Asked" : undefined;
-    if (ask) log(ask, n.id, `${thread ?? "claude"} · ${ask === "Woke" ? "woke an asleep file" : `asked to reattach while detached${S.map.settings.autoApply ? ", reattached by rule" : ""}`}`, e.path, e.s, e.t);
-    log(e.blocked ? "Blocked" : e.verb, n.id, who, e.path, e.s, e.t, { act: e.id, items: [{ id: n.id, verb: e.blocked ? "Blocked" : e.verb, session: e.s, start: e.t }, ...prFiles] });
-  } else if (e.id) { const r = rows.get(e.id); if (r?.[0]) r[0].end = e.t; rows.delete(e.id); }
-  if (e.verb === "Edit" && e.ph === "end" && !e.blocked && !animate) { if (!edited.has(e.s)) edited.set(e.s, new Set()); edited.get(e.s)!.add(n.id); }
+  log(e);
+  if (e.verb === "Edit") { if (!edited.has(e.s)) edited.set(e.s, new Set()); edited.get(e.s)!.add(n.id); }
   if (!animate) return;
-  if (e.blocked) { const v = via(n, pr); signal(v ? [["core", v]] : [], "Blocked", { label: "blocked" }, () => shake(v ?? n.id)); return; }
-  if (e.ph === "start") {
-    if (n.tier !== "core") active.set(n.id, { verb: e.verb, color: pr.color, start: e.t, until: Date.now() + 60_000, session: e.s });
-    if (e.verb === "Run") signal(route(n, pr), "Run", { label: "run" }, () => flash(n.id, "Run"));
-    paintActs();
-    renderPresets();
-    return;
-  }
-  const a = active.get(n.id);
-  if (a) a.until = Date.now() + 1200;
-  const done = () => { if (e.outside) mark(n.id); };
-  if (e.verb === "Read") signal(back(route(n, pr)), "Read", { label: n.tokens ? `+${fmt(n.tokens)} tokens` : "read", size: n.tokens }, () => { flash("core", "Read"); done(); });
-  else if (e.verb === "Edit") {
-    if (!edited.has(e.s)) edited.set(e.s, new Set());
-    edited.get(e.s)!.add(n.id);
-    signal(route(n, pr), "Edit", { label: "edit" }, () => { flash(n.id, "Edit"); done(); });
-  } else if (e.verb === "Run") signal(back(route(n, pr)), "Run", { label: "output" }, done);
+  if (n.tier !== "core") active.set(n.id, { verb: e.verb, start: e.t, until: Date.now() + 2500, session: e.s });
+  paintActs();
+  if (e.verb === "Read") signal(back(route(n)), "Read", { label: n.tokens ? `+${fmt(n.tokens)} tokens${e.sub ? " · subagent" : ""}` : "read", size: n.tokens }, () => flash("core", "Read"));
+  else if (e.verb === "Edit") signal(route(n), "Edit", { label: "edit" }, () => flash(n.id, "Edit"));
+  else if (e.verb === "Run") signal(back(route(n)), "Run", { label: "output" }, () => flash(n.id, "Run"));
   else if (e.verb === "PR") {
     const changed = [...(edited.get(e.s) ?? [])].map((id) => byId.get(id)).filter((x): x is Node => !!x);
     let left = changed.length;
-    const send = () => signal(route(n, pr), "PR", { label: `PR · ${changed.length} file${changed.length === 1 ? "" : "s"}`, size: 400 * Math.max(1, changed.length) }, () => { flash(n.id, "PR"); edited.delete(e.s); done(); });
+    const send = () => signal(route(n), "PR", { label: `PR · ${changed.length} file${changed.length === 1 ? "" : "s"}`, size: 400 * Math.max(1, changed.length) }, () => { flash(n.id, "PR"); edited.delete(e.s); });
     if (!left) send();
-    else changed.forEach((c) => signal(back(route(c, pr)), "PR", { r: 4 }, () => { if (--left === 0) send(); }));
+    else changed.forEach((c) => signal(back(route(c)), "PR", { r: 4 }, () => { if (--left === 0) send(); }));
   }
 }
 
-function shake(id: string) { const d = els[id]; if (!d) return; d.classList.remove("ask"); void d.offsetWidth; d.classList.add("ask"); }
-function mark(id: string) { const d = els[id]; if (!d) return; d.classList.add("outside"); setTimeout(() => d.classList.remove("outside"), 1400); }
 function flash(id: string, verb: string) {
   const d = els[id];
   if (!d) return;
@@ -961,7 +616,7 @@ function flash(id: string, verb: string) {
   void d.offsetWidth;
   d.classList.add("fire");
 }
-interface TravelOpts { r: number; trail?: number; dur: number; opacity?: number; to?: number; rev?: boolean; label?: string | null }
+interface TravelOpts { r: number; trail?: number; dur: number; opacity?: number; rev?: boolean; label?: string | null }
 function travel(path: SVGPathElement | undefined, color: string, o: TravelOpts, done?: () => void) {
   if (!path) return done?.();
   const L = path.getTotalLength(), trail = o.trail ?? 0, dots: SVGCircleElement[] = [];
@@ -979,10 +634,9 @@ function travel(path: SVGPathElement | undefined, color: string, o: TravelOpts, 
   const at = (f: number) => path.getPointAtLength(L * (o.rev ? 1 - f : f));
   const run = (now: number) => {
     t0 ??= now;
-    const t = Math.min(1, (now - t0) / o.dur), e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2, end = o.to ?? 1;
-    dots.forEach((c, k) => { const p = at(end * Math.max(0, e - k * 0.035)); c.setAttribute("cx", String(p.x)); c.setAttribute("cy", String(p.y)); });
-    if (lab) { const p = at(end * e); lab.setAttribute("x", String(p.x + o.r + 6)); lab.setAttribute("y", String(p.y - o.r - 4)); }
-    if (o.to && t > 0.6) dots.forEach((c) => c.setAttribute("opacity", String((1 - t) * 1.2 * (o.opacity ?? 1))));
+    const t = Math.min(1, (now - t0) / o.dur), e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    dots.forEach((c, k) => { const p = at(Math.max(0, e - k * 0.035)); c.setAttribute("cx", String(p.x)); c.setAttribute("cy", String(p.y)); });
+    if (lab) { const p = at(e); lab.setAttribute("x", String(p.x + o.r + 6)); lab.setAttribute("y", String(p.y - o.r - 4)); }
     if (t < 1) return requestAnimationFrame(run);
     dots.forEach((c) => c.remove());
     lab?.remove();
@@ -1017,7 +671,7 @@ function adopt(next: State) {
   $("project").textContent = next.project;
   $("project").hidden = self;
   document.title = self ? "WEAVE" : `${next.project} · WEAVE`;
-  if (!next.map.presets.some((p) => p.id === P)) P = next.map.settings.defaultPreset;
+  if (A && !next.areas.some((a) => a.id === A)) A = "";
   const sig = next.map.nodes.map((n) => `${n.id}|${n.label}|${n.of.join(",")}|${n.tokens}|${n.kind}`).join(";");
   if (sig !== shape) {
     const old = new Map(N.map((n) => [n.id, n]));
@@ -1042,10 +696,8 @@ function renderAll() {
   draw();
   paintActs();
   inspect();
-  renderPresets();
-  renderEditing();
-  renderFrost();
-  renderSuggestions();
+  renderAreas();
+  renderThreads();
   renderSettings();
 }
 

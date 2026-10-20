@@ -1,17 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, rmSync, statSync } from "node:fs";
-import { createServer } from "node:http";
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { createServer, request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  ContextStore, scanProject, listenWithFallback, attach, detach, isLive, getPreset, findNode, nodeForPath,
-  windowNote, spinUp, handleHook, suggestions, recentEvents, heat, warmth, HALF_LIFE, saveKey,
-  overdue, OVERDUE_DAYS, sleep, presetFromHeat, tagFor, threadName, readKey, removeKey, tokenMode, startDashboard,
-  frozen, frozenLine, FREEZE_AFTER, FROZEN_CHARS, contextLevel, thresholds, normalizeMap, appendEvent, readThreads, removeThreads,
-  handoff, bestPreset, startPreset, createPreset, titleFrom, calibrate, presetFromFiles,
+  ContextStore, scanProject, listenWithFallback, nodeForPath, handleHook, recentEvents, threadName, titleFrom, startDashboard,
+  normalizeMap, appendEvent, readThreads, removeThreads, writeThread, areas, agentAreas, writeAgents, mapNote, MARK, meter, meterLine,
+  staleTokens, createTools, CLEAR_LOOK,
 } from "../dist/index.js";
-import { createTools } from "../dist/mcp/tools.js";
 
 function write(root, rel, text) {
   mkdirSync(join(root, rel, ".."), { recursive: true });
@@ -33,6 +30,15 @@ function project() {
   return root;
 }
 
+const MIN = 60_000;
+const ev = (t, s, node, verb = "Read", extra = {}) => ({ t, s, ph: "end", verb, node, path: node, tool: verb === "Edit" ? "Edit" : "Read", ...extra });
+/** A transcript whose last usage line puts `tokens` in the thread's context. */
+function transcript(root, name, tokens) {
+  const file = join(root, `${name}.jsonl`);
+  writeFileSync(file, JSON.stringify({ message: { usage: { input_tokens: 10, cache_read_input_tokens: tokens - 10, output_tokens: 0 } } }) + "\n");
+  return file;
+}
+
 test("scanner builds three layers from real files, with shared elements and links", () => {
   const root = project();
   const { nodes, links } = scanProject(root);
@@ -45,9 +51,7 @@ test("scanner builds three layers from real files, with shared elements and link
   assert.ok(by["test/format.test.ts"].of.includes("src/lib"), "a test joins the feature it tests");
   assert.ok(links.some((l) => l.from === "test/format.test.ts" && l.to === "src/lib/format.ts" && l.why === "tests"));
   assert.deepEqual(by["tool:build:ui"].of, ["src/ui"]);
-  assert.equal(nodes.some((n) => n.label.toLowerCase().includes("mock")), false);
-  write(root, ".gitignore", "CLAUDE.md\n");
-  assert.ok(scanProject(root).nodes[0].paths.includes("CLAUDE.md"), "an ignored CLAUDE.md stays in the core");
+  assert.equal(by["src/ui/App.tsx"].tokens, Math.round(readFileSync(join(root, "src/ui/App.tsx")).length / 4), "estimates only, nothing leaves the machine");
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -57,335 +61,216 @@ test("big features fold sub-folders into one node each", () => {
   const { nodes } = scanProject(root);
   const els = nodes.filter((n) => n.tier === "element" && n.kind !== "tool");
   assert.deepEqual(els.map((n) => n.id).sort(), ["engine/part0/", "engine/part1/", "engine/part2/"]);
+  const map = { nodes };
+  assert.equal(nodeForPath(map, "engine/part1")?.id, "engine/part1/", "a folder path matches without its trailing slash");
   rmSync(root, { recursive: true, force: true });
 });
 
-test("missing or corrupt map rebuilds from a scan without throwing", () => {
+test("a broken map is kept as a backup before it is rebuilt, and old maps keep their nodes", () => {
   const root = project();
   const store = new ContextStore(root);
   assert.equal(store.load().source, "scan");
   mkdirSync(join(root, ".claude"), { recursive: true });
   writeFileSync(store.mapPath, "{nope");
+  assert.equal(new ContextStore(root).load(false).map.nodes.length, 0, "hooks never scan");
   const loaded = store.load();
   assert.equal(loaded.source, "scan");
-  assert.match(loaded.warning, /unreadable/);
-  assert.equal(new ContextStore(root).load(false).map.nodes.length, 0, "hooks never scan");
+  assert.match(loaded.warning, /\.bak/);
+  assert.equal(readFileSync(`${store.mapPath}.bak`, "utf8"), "{nope");
+  const old = normalizeMap({ version: 2, nodes: [{ id: "core", tier: "core", label: "x" }], presets: [{ id: "full" }], settings: { heavyAt: 50_000, window: 5 } });
+  assert.equal(old.version, 3);
+  assert.equal(old.nodes.length, 1);
+  assert.equal("presets" in old, false);
+  assert.deepEqual(old.settings, { window: 50_000, compactAt: 0.6, meter: true }, "settings are clamped to safe values");
   rmSync(root, { recursive: true, force: true });
 });
 
-test("presets attach and detach without touching project files", () => {
+test("areas join features that the same threads use together, up to a size cap", () => {
   const root = project();
-  const store = new ContextStore(root);
-  const map = store.rescan();
-  const before = readFileSync(join(root, "CLAUDE.md"), "utf8");
-  const p = getPreset(map);
-  assert.ok(isLive(findNode(map, "src/lib/format.ts"), p));
-  detach(map, p.id, "src/ui");
-  detach(map, p.id, "src/api");
-  detach(map, p.id, "src/lib");
-  assert.equal(isLive(findNode(map, "src/lib/format.ts"), p), false);
-  attach(map, p.id, "src/lib/format.ts");
-  assert.ok(p.features.includes("src/lib"), "attaching an orphan element brings its first feature");
-  assert.throws(() => detach(map, p.id, "core"));
-  assert.equal(nodeForPath(map, "src/ui/App.tsx").id, "src/ui/App.tsx");
-  assert.match(windowNote(map, p), /Attached: .*src\/lib\//);
-  assert.equal(readFileSync(join(root, "CLAUDE.md"), "utf8"), before);
-  rmSync(root, { recursive: true, force: true });
-});
-
-test("a new feature from a design node can bring a saved window", () => {
-  const root = project();
-  const store = new ContextStore(root);
-  const { map } = store.update((m) => {
-    const narrow = { id: "api-only", name: "API only", color: "#000", features: ["src/api"], detached: [], changedAt: {} };
-    m.presets.push(narrow);
-    spinUp(m, undefined, "src/ui/theme.css", "Dark mode", "api-only");
-  });
-  const reloaded = store.rescan();
-  const f = reloaded.nodes.find((n) => n.label === "Dark mode");
-  assert.ok(f?.custom);
-  assert.ok(findNode(reloaded, "src/ui/theme.css").of.includes(f.id), "survives a rescan");
-  assert.ok(findNode(reloaded, "src/api/server.ts").of.includes(f.id));
-  assert.ok(getPreset(map).features.includes(f.id));
-  rmSync(root, { recursive: true, force: true });
-});
-
-test("hooks log activity, gate detached files and feed the rules", () => {
-  const root = project();
-  const store = new ContextStore(root);
-  store.update((m) => detach(m, undefined, "src/lib/format.ts"));
-  const start = handleHook({ hook_event_name: "SessionStart", session_id: "t1" }, root);
-  assert.match(JSON.parse(start.stdout).hookSpecificOutput.additionalContext, /WEAVE context window/);
-  const read = { hook_event_name: "PreToolUse", session_id: "t1", tool_name: "Read", tool_input: { file_path: join(root, "src/lib/format.ts") } };
-  assert.equal(handleHook(read, root).stdout, undefined, "allow and flag by default");
-  handleHook({ ...read, hook_event_name: "PostToolUse" }, root);
-  store.update((m) => { m.settings.gate = "block"; });
-  const denied = JSON.parse(handleHook(read, root).stdout);
-  assert.equal(denied.hookSpecificOutput.permissionDecision, "deny");
-  handleHook({ hook_event_name: "PreToolUse", session_id: "t1", tool_name: "Bash", tool_input: { command: "npm run test" } }, root);
-  const events = recentEvents(store.paths);
-  assert.deepEqual(events.map((e) => [e.verb, e.node, !!e.outside, !!e.blocked]), [
-    ["Read", "src/lib/format.ts", true, false], ["Read", "src/lib/format.ts", true, false], ["Read", "src/lib/format.ts", true, true], ["Run", "tool:test", false, false],
-  ]);
-  const { map } = store.load();
-  const s = suggestions(map, getPreset(map), events);
-  assert.equal(s[0].rule, "Asked while detached");
-  assert.equal(s[0].attach, true);
-  rmSync(root, { recursive: true, force: true });
-});
-
-test("auto-apply only reattaches", () => {
-  const root = project();
-  const store = new ContextStore(root);
-  store.update((m) => { detach(m, undefined, "src/lib/format.ts"); m.settings.autoApply = true; });
-  const read = { session_id: "t1", tool_name: "Read", tool_input: { file_path: join(root, "src/lib/format.ts") } };
-  handleHook({ ...read, hook_event_name: "PreToolUse" }, root);
-  handleHook({ ...read, hook_event_name: "PostToolUse" }, root);
-  const { map } = store.load();
-  assert.ok(isLive(findNode(map, "src/lib/format.ts"), getPreset(map)));
-  rmSync(root, { recursive: true, force: true });
-});
-
-test("heat counts reads and edits and fades with time", () => {
+  write(root, "docs/big.md", "x".repeat(4000));
+  const map = new ContextStore(root).rescan();
   const now = Date.now();
-  const ev = (verb, node, ago, extra = {}) => ({ t: now - ago, s: "t1", ph: "end", verb, node, tool: "x", ...extra });
-  const h = heat([
-    ev("Read", "a", 0), ev("Edit", "a", 0), ev("Read", "b", HALF_LIFE), ev("Run", "c", 0),
-    ev("Read", "d", 0, { blocked: true }), { ...ev("Read", "e", 0), ph: "start" },
-  ], now);
-  assert.equal(h.get("a"), 3, "an edit counts twice");
-  assert.equal(h.get("b"), 0.5, "halved after one half-life");
-  assert.equal(h.has("c") || h.has("d") || h.has("e"), false, "runs, blocked calls and unfinished calls do not count");
-});
-
-test("warm and cold steer threads without detaching anything", () => {
-  const root = project();
-  const store = new ContextStore(root);
-  store.save(store.load().map);
-  const read = (f) => {
-    const input = { session_id: "t1", tool_name: "Read", tool_input: { file_path: join(root, f) } };
-    handleHook({ ...input, hook_event_name: "PreToolUse" }, root);
-    handleHook({ ...input, hook_event_name: "PostToolUse" }, root);
-  };
-  const note = () => JSON.parse(handleHook({ hook_event_name: "SessionStart", session_id: "t2" }, root).stdout).hookSpecificOutput.additionalContext;
-  assert.ok(!note().includes("Warm"), "no usage yet, so the note stays as before");
-
-  read("src/lib/format.ts");
-  read("src/lib/format.ts");
-  read("src/ui/theme.css");
-  const { map } = store.load();
-  const preset = getPreset(map);
-  const before = JSON.stringify(preset);
-  const w = warmth(map, preset, recentEvents(store.paths));
-  assert.deepEqual(w.warm.map((n) => n.id), ["src/lib/format.ts", "src/ui/theme.css"], "hottest first");
-  assert.ok(w.cold.some((n) => n.id === "src/ui/App.tsx"));
-  assert.deepEqual(w.hot, [], "two reads is warm, not hot");
-  assert.ok(w.cold.every((n) => isLive(n, preset)), "cold files stay attached");
-  assert.match(note(), /Warm, start here: src\/lib\/format\.ts, src\/ui\/theme\.css/);
-  assert.match(note(), /Cold, open only when the task needs them/);
-  assert.equal(JSON.stringify(getPreset(store.load().map)), before, "the preset is never edited");
-
-  store.update((m) => { m.settings.idleAfter = 3; });
-  for (let i = 0; i < 3; i++) read("src/api/server.ts");
-  const unused = (m) => suggestions(m, getPreset(m), recentEvents(store.paths)).filter((s) => s.rule === "Unused");
-  assert.equal(unused(store.load().map).length, 0, "with warm and cold on, rarely used files are cold, not detach suggestions");
-  assert.equal(unused({ ...store.load().map, settings: { ...store.load().map.settings, warmCold: false } }).length, 1, "the Unused rule is back when it is off");
-
-  for (let i = 0; i < 9; i++) read("src/lib/format.ts");
-  assert.deepEqual(warmth(store.load().map, preset, recentEvents(store.paths)).hot.map((n) => n.id), ["src/lib/format.ts"], "a run of recent reads makes it hot");
-
-  store.update((m) => { m.settings.warmCold = false; });
-  assert.ok(!note().includes("Warm"), "the switch turns it off");
+  assert.ok(areas(map, []).every((a) => a.from === "folders" && a.features.length === 1), "with no activity, every area is one folder");
+  const events = [
+    ev(now, "t1", "src/ui/App.tsx"), ev(now, "t1", "src/lib/format.ts", "Edit"),
+    ev(now, "t2", "src/ui/theme.css"), ev(now, "t2", "src/lib/format.ts"),
+    ev(now, "t3", "src/api/server.ts"), ev(now, "t3", "src/api/server.ts", "Run"),
+  ];
+  const all = areas(map, events);
+  const ui = all.find((a) => a.features.includes("src/ui"));
+  assert.deepEqual(ui.features, ["src/lib", "src/ui"]);
+  assert.equal(ui.agent, "weave-src-ui-and-1", "named after its biggest folder");
+  assert.equal(ui.name, "src/ui + 1 more");
+  assert.equal(ui.threads, 2);
+  assert.deepEqual(ui.files, ["src/lib/format.ts", "src/ui/App.tsx", "src/ui/theme.css"], "most used first");
+  assert.deepEqual(all.find((a) => a.features.includes("src/api")).features, ["src/api"], "one thread is not enough to join");
+  assert.equal(all[0].id, ui.id, "busiest area first");
+  rmSync(join(root, "docs/big.md"));
+  const small = areas(new ContextStore(root).rescan(), events);
+  assert.deepEqual(small.find((a) => a.features.includes("src/ui")).features, ["src/ui"], "a join that would hold over 35% of the project is skipped");
   rmSync(root, { recursive: true, force: true });
 });
 
-test("thread names drop wrapper blocks and tags", () => {
+test("each area gets a subagent file, and WEAVE only ever touches its own files", () => {
+  const root = project();
+  const map = new ContextStore(root).rescan();
+  const all = areas(map, []);
+  const dir = join(root, ".claude", "agents");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "weave-src-ui.md"), "my own agent\n");
+  writeFileSync(join(dir, "weave-gone.md"), `---\nname: weave-gone\n---\n${MARK}\n`);
+  const r = writeAgents(root, "demo", all);
+  assert.equal(readFileSync(join(dir, "weave-src-ui.md"), "utf8"), "my own agent\n", "a file without the mark is never overwritten");
+  assert.deepEqual(r.removed, ["weave-gone.md"]);
+  const api = readFileSync(join(dir, "weave-src-api.md"), "utf8");
+  assert.match(api, /^---\nname: weave-src-api\ndescription: Use for tasks inside src\/api\/ in demo/);
+  assert.ok(api.includes(MARK));
+  assert.deepEqual(writeAgents(root, "demo", all).written, [], "unchanged files are not rewritten");
+  assert.equal(agentAreas(all).length, all.length);
+  const note = mapNote(map, all);
+  assert.match(note, /^WEAVE map of demo/);
+  assert.match(note, /- weave-src-api: src\/api\//);
+  assert.ok(note.length < 1200, "the note stays short");
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("the meter says /compact when the thread is nearly full or mostly stale", () => {
+  const root = project();
+  write(root, "src/api/big.ts", "x".repeat(160_000));
+  const map = new ContextStore(root).rescan();
+  const now = Date.now();
+  const base = { map, areas: [], agents: [], at: "prompt" };
+  const thread = { id: "t1", name: "x", startedAt: now, lastSeen: now, prompts: [now - 30 * MIN, now - 20 * MIN, now] };
+  assert.equal(meter({ ...base, events: [], thread, tokens: 100_000 }).level, "ok");
+  const full = meter({ ...base, events: [], thread, tokens: 170_000 });
+  assert.equal(full.level, "compact");
+  assert.match(meterLine(full), /Run \/compact\. Only the user can run it/);
+  const events = [ev(now - 40 * MIN, "t1", "src/api/big.ts"), ev(now - MIN, "t1", "src/ui/App.tsx")];
+  assert.equal(staleTokens(map, events, "t1", thread.prompts), 40_000);
+  assert.equal(meter({ ...base, events, thread, tokens: 130_000 }).level, "compact", "past compactAt with a quarter stale");
+  assert.equal(meter({ ...base, events, thread, tokens: 130_000, map: { ...map, settings: { ...map.settings, window: 1_000_000 } } }).level, "ok", "the window size matters");
+  assert.equal(meter({ ...base, events: [ev(now - 40 * MIN, "t1", "src/api/big.ts", "Read", { sub: true })], thread, tokens: 130_000 }).level, "ok", "a subagent's reads never reached the thread");
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("the meter says /clear when a message starts on files the thread never touched", () => {
+  const root = project();
+  const map = new ContextStore(root).rescan();
+  const now = Date.now();
+  const thread = { id: "t1", name: "x", startedAt: now, lastSeen: now, prompts: [now - 30 * MIN, now - MIN], asks: ["Fix the api", "Restyle the ui"] };
+  const before = [ev(now - 20 * MIN, "t1", "src/api/server.ts", "Edit"), ev(now - 19 * MIN, "t1", "src/lib/format.ts")];
+  const args = { map, areas: [], agents: [], at: "tool", thread, tokens: 60_000 };
+  assert.equal(meter({ ...args, events: [...before, ev(now, "t1", "src/ui/App.tsx")] }).level, "ok", "one read is not enough");
+  const m = meter({ ...args, events: [...before, ev(now, "t1", "src/ui/App.tsx"), ev(now, "t1", "src/ui/theme.css")] });
+  assert.equal(m.level, "clear");
+  assert.match(m.text, /works in src\/ui\/.*Run \/clear.*Carry-over: earlier task "Fix the api"; edited src\/api\/server\.ts\./);
+  assert.equal(meter({ ...args, events: [...before, ev(now, "t1", "src/ui/App.tsx"), ev(now, "t1", "src/lib/format.ts")] }).level, "ok", "same folders as before");
+  const late = [...before, ...Array.from({ length: CLEAR_LOOK + 1 }, () => ev(now, "t1", "src/ui/App.tsx")), ev(now, "t1", "src/ui/theme.css")];
+  assert.equal(meter({ ...args, events: late }).level, "ok", "late in a message, a long task wandering is not a new task");
+  assert.equal(meter({ ...args, tokens: 20_000, events: [...before, ev(now, "t1", "src/ui/App.tsx"), ev(now, "t1", "src/ui/theme.css")] }).level, "ok", "a small thread gains little from /clear");
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("from 40% the meter tells Claude to hand the work to the area's subagent", () => {
+  const root = project();
+  const map = new ContextStore(root).rescan();
+  const now = Date.now();
+  const all = areas(map, []);
+  const thread = { id: "t1", name: "x", startedAt: now, lastSeen: now, prompts: [now - 30 * MIN, now - MIN] };
+  const events = [ev(now - 20 * MIN, "t1", "src/ui/App.tsx"), ev(now, "t1", "src/ui/theme.css")];
+  const args = { map, areas: all, agents: agentAreas(all), at: "tool", thread, events };
+  assert.equal(meter({ ...args, tokens: 60_000 }).level, "ok");
+  const m = meter({ ...args, tokens: 90_000 });
+  assert.equal(m.level, "delegate");
+  assert.equal(m.agent, "weave-src-ui");
+  assert.equal(meterLine(m), "WEAVE: This thread holds ~90.0k of 200k tokens. Hand the rest of this task to the weave-src-ui subagent (src/ui/) so its reads stay out of this thread.");
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("hooks give the map note, log only finished calls, and speak at most once per message", () => {
+  const root = project();
+  const store = new ContextStore(root);
+  store.rescan();
+  const start = handleHook({ hook_event_name: "SessionStart", session_id: "t1", cwd: root });
+  assert.match(JSON.parse(start.stdout).hookSpecificOutput.additionalContext, /^WEAVE map of demo/);
+  assert.ok(existsSync(join(root, ".claude/agents/weave-src-ui.md")), "the session start writes the subagents");
+  const tx = transcript(root, "t1", 170_000);
+  const prompt = handleHook({ hook_event_name: "UserPromptSubmit", session_id: "t1", cwd: root, transcript_path: tx, prompt: "<wake>x</wake> Fix the header" });
+  assert.match(JSON.parse(prompt.stdout).hookSpecificOutput.additionalContext, /Run \/compact/);
+  assert.equal(readThreads(store.paths).t1.name, "Fix the header");
+  const read = { hook_event_name: "PostToolUse", session_id: "t1", cwd: root, tool_name: "Read", tool_input: { file_path: join(root, "src/lib/format.ts") } };
+  assert.equal(handleHook(read).stdout, undefined, "one line per message, already said");
+  handleHook({ ...read, agent_id: "a1" });
+  handleHook({ hook_event_name: "PreToolUse", session_id: "t1", cwd: root, tool_name: "Read", tool_input: { file_path: join(root, "src/ui/App.tsx") } });
+  handleHook({ hook_event_name: "PostToolUse", session_id: "t1", cwd: root, tool_name: "Bash", tool_input: { command: "npm run test" } });
+  assert.deepEqual(recentEvents(store.paths).map((e) => [e.verb, e.node, !!e.sub]), [["Read", "src/lib/format.ts", false], ["Read", "src/lib/format.ts", true], ["Run", "tool:test", false]]);
+  handleHook({ hook_event_name: "PostToolUse", session_id: "t1", cwd: root, tool_name: "mcp__weave__weave_name_thread", tool_input: { name: "Header fixes" } });
+  assert.equal(readThreads(store.paths).t1.name, "Header fixes");
+  store.update((m) => { m.settings.meter = false; });
+  assert.equal(handleHook({ hook_event_name: "UserPromptSubmit", session_id: "t1", cwd: root, transcript_path: tx, prompt: "Again" }).stdout, undefined, "the meter can be switched off");
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("thread names drop wrapper blocks and tags, and title tools name threads", () => {
   assert.equal(threadName('<relay from="x"><note>do the thing</note></relay> Fix the header'), "Fix the header");
   assert.equal(threadName("<wake reason=\"mention\">hi</wake>"), "");
   assert.equal(threadName("Make the <b>map</b> faster"), "Make the map faster");
   assert.equal(threadName('Hello <relay from="coordinator" session="s'), "Hello", "an unclosed wrapper is dropped too");
+  assert.equal(titleFrom("mcp__hearthbot__set_thread_label", { label: " WEAVE thread hand-off " }), "WEAVE thread hand-off");
+  assert.equal(titleFrom("Read", { label: "x" }), undefined);
 });
 
-test("a preset saved from heat keeps the warm files and is named by fixed rules", () => {
+test("an ended thread leaves the list while its activity stays", () => {
+  const root = project();
+  const store = new ContextStore(root);
+  store.rescan();
+  handleHook({ hook_event_name: "UserPromptSubmit", session_id: "a1", cwd: root, prompt: "Work" });
+  handleHook({ hook_event_name: "UserPromptSubmit", session_id: "b2", cwd: root, prompt: "Other" });
+  handleHook({ hook_event_name: "PostToolUse", session_id: "a1", cwd: root, tool_name: "Read", tool_input: { file_path: join(root, "src/ui/App.tsx") } });
+  const events = recentEvents(store.paths).length;
+  assert.equal(removeThreads(store.paths, ["a1", "nope"]), 1, "only a known thread is counted");
+  assert.deepEqual(Object.keys(readThreads(store.paths)), ["b2"]);
+  assert.equal(recentEvents(store.paths).length, events, "activity is kept, so areas keep what the thread taught them");
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("MCP tools return areas and paths only", () => {
+  const root = project();
+  const tools = createTools(new ContextStore(root));
+  const map = JSON.parse(tools.weave_map.handler({}).content[0].text);
+  assert.ok(map.areas.some((a) => a.agent === "weave-src-ui" && a.folders[0] === "src/ui/"));
+  assert.ok(!JSON.stringify(map).includes("String(n)"), "never file contents");
+  const hit = JSON.parse(tools.weave_area_for.handler({ path: "./src/ui/App.tsx" }).content[0].text);
+  assert.equal(hit.agent, "weave-src-ui");
+  assert.equal(tools.weave_area_for.handler({ path: "nope/x.ts" }).isError, true);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("the map server shows areas and meters, refuses other pages, and survives bad paths", async () => {
   const root = project();
   const store = new ContextStore(root);
   const now = Date.now();
-  const ev = (node, verb = "Read") => ({ t: now, s: "t1", ph: "end", verb, node, tool: "x" });
-  const { map } = store.load();
-  assert.throws(() => presetFromHeat(map, getPreset(map), [], now), /Nothing is warm yet/);
-  const p = presetFromHeat(map, getPreset(map), [ev("src/ui/App.tsx"), ev("src/ui/theme.css", "Edit")], now);
-  assert.equal(p.name, "Amethyst · UI", "a crystal name, tagged as mostly UI files");
-  assert.ok(isLive(findNode(map, "src/ui/App.tsx"), p) && isLive(findNode(map, "src/ui/theme.css"), p));
-  assert.ok(!isLive(findNode(map, "src/api/server.ts"), p), "other features stay out");
-  assert.equal(tagFor(map, [findNode(map, "docs/guide.md")]), "Docs");
-  assert.equal(tagFor(map, [findNode(map, "test/format.test.ts")]), "Tests");
-  assert.equal(tagFor(map, [findNode(map, "src/api/server.ts")]), "Api", "otherwise the main feature folder");
-  rmSync(root, { recursive: true, force: true });
-});
-
-test("overdue files can be put to sleep and wake when Claude uses them", () => {
-  const root = project();
-  const store = new ContextStore(root);
-  store.save(store.load().map);
-  const now = Date.now(), old = now - (OVERDUE_DAYS + 1) * 864e5;
-  const ev = (node, t) => ({ t, s: "t1", ph: "end", verb: "Read", node, tool: "x" });
-  const { map } = store.load();
-  assert.deepEqual(overdue(map, getPreset(map), [ev("src/ui/App.tsx", now)], now), [], "a log shorter than 14 days flags nothing");
-  const due = overdue(map, getPreset(map), [ev("src/ui/App.tsx", old), ev("src/lib/format.ts", now)], now).map((n) => n.id);
-  assert.ok(due.includes("src/ui/App.tsx") && !due.includes("src/lib/format.ts"));
-
-  store.update((m) => { sleep(m, undefined, ["src/ui/App.tsx"]); m.settings.gate = "block"; });
-  const slept = store.load().map;
-  assert.ok(!isLive(findNode(slept, "src/ui/App.tsx"), getPreset(slept)));
-  assert.ok(!windowNote(slept, getPreset(slept)).includes("App.tsx"), "asleep files are left out of the thread note");
-  const input = { session_id: "t1", tool_name: "Read", tool_input: { file_path: join(root, "src/ui/App.tsx") } };
-  const pre = handleHook({ ...input, hook_event_name: "PreToolUse" }, root);
-  assert.ok(!pre.stdout, "a sleeping file is never blocked, even in Block mode");
-  assert.ok(isLive(findNode(store.load().map, "src/ui/App.tsx"), getPreset(store.load().map)), "and it wakes the moment Claude reads it");
-  rmSync(root, { recursive: true, force: true });
-});
-
-test("files a thread moved on from freeze for that thread only", () => {
-  const root = project();
-  const { map } = new ContextStore(root).load();
-  const now = Date.now(), min = 60_000;
-  const ev = (node, ago, s = "t1", verb = "Read") => ({ t: now - ago, s, ph: "end", verb, node, tool: "x" });
-  const events = [ev("src/ui/App.tsx", 30 * min), ev("src/api/server.ts", 30 * min, "t2"), ev("src/lib/format.ts", 25 * min, "t1", "Edit"), ev("docs/guide.md", 5 * min), ev("tool:test", 40 * min, "t1", "Run")];
-  const ids = (prompts) => frozen(map, events, "t1", prompts, now).map((n) => n.id);
-  assert.deepEqual(ids([now]), [], "a thread on its first message has nothing frozen");
-  assert.deepEqual(ids([now - 40 * min, now - 20 * min, now]), ["src/lib/format.ts", "src/ui/App.tsx"], "used before its last two messages and over 10 minutes ago");
-  assert.deepEqual(ids([now - 40 * min, now - 35 * min, now]), [], "still within its last two messages");
-  assert.deepEqual(ids([now - 4 * min, now - 2 * min, now]), ["src/lib/format.ts", "src/ui/App.tsx"]);
-  assert.ok(!ids([now - 40 * min, now - 20 * min, now]).includes("docs/guide.md"), "used in the last 10 minutes");
-  assert.ok(FREEZE_AFTER === 10 * min);
-  assert.deepEqual(frozen(map, events, "t2", [now - 40 * min, now - 20 * min, now], now).map((n) => n.id), ["src/api/server.ts"], "per thread");
-  rmSync(root, { recursive: true, force: true });
-});
-
-test("the frozen line groups by folder and stays short", () => {
-  assert.equal(frozenLine([]), undefined);
-  assert.equal(frozenLine(["src/a.ts", "src/b.ts", "README.md", "lib/x/"]), "Frozen, skip unless needed: src/{a.ts, b.ts}, README.md, lib/x/.");
-  assert.equal(frozenLine(["src/a.ts", "src/b.ts", "src/c.ts", "src/d.ts"]), "Frozen, skip unless needed: src/ (4 files).");
-  const many = Array.from({ length: 40 }, (_, i) => `folder${i}/some/deeper/path/file${i}.ts`);
-  const line = frozenLine(many);
-  assert.ok(line.length <= FROZEN_CHARS, `${line.length} characters`);
-  assert.match(line, /and \d+ more\.$/);
-});
-
-test("each message tells the thread what is frozen, and a file unfreezes when used", () => {
-  const root = project();
-  const store = new ContextStore(root);
-  store.save(store.load().map);
-  const before = JSON.stringify(store.load().map.presets);
-  const now = Date.now(), min = 60_000;
-  appendEvent(store.paths, { t: now - 30 * min, s: "t1", ph: "end", verb: "Read", node: "src/ui/App.tsx", tool: "Read", path: "src/ui/App.tsx" });
-  writeFileSync(store.paths.threads, JSON.stringify({ t1: { id: "t1", name: "x", startedAt: now - 40 * min, lastSeen: now, prompts: [now - 40 * min, now - 20 * min] } }));
-  const prompt = () => handleHook({ hook_event_name: "UserPromptSubmit", session_id: "t1", prompt: "next" }, root).stdout;
-  const first = JSON.parse(prompt()).hookSpecificOutput;
-  assert.equal(first.hookEventName, "UserPromptSubmit");
-  assert.equal(first.additionalContext, "Frozen, skip unless needed: src/ui/App.tsx.");
-  assert.equal(readThreads(store.paths).t1.prompts.length, 3, "prompt times are kept per thread");
-  assert.equal(handleHook({ hook_event_name: "UserPromptSubmit", session_id: "t9", prompt: "hi" }, root).stdout, undefined, "other threads are not touched");
-
-  const read = { session_id: "t1", tool_name: "Read", tool_input: { file_path: join(root, "src/ui/App.tsx") } };
-  assert.equal(handleHook({ ...read, hook_event_name: "PreToolUse" }, root).stdout, undefined, "a frozen file is never blocked");
-  handleHook({ ...read, hook_event_name: "PostToolUse" }, root);
-  assert.equal(prompt(), undefined, "reading it unfreezes it");
-  assert.equal(JSON.stringify(store.load().map.presets), before, "presets are never edited");
-
-  appendEvent(store.paths, { t: now - 30 * min, s: "t1", ph: "end", verb: "Edit", node: "src/lib/format.ts", tool: "Edit" });
-  store.update((m) => { m.settings.freeze = false; });
-  assert.equal(prompt(), undefined, "the switch turns it off");
-  rmSync(root, { recursive: true, force: true });
-});
-
-test("context warnings follow fixed, adjustable thresholds", () => {
-  const st = { heavyAt: 150_000, freshAt: 300_000 };
-  assert.deepEqual(contextLevel(undefined, st), { level: "ok" });
-  assert.deepEqual(contextLevel(149_999, st), { level: "ok" });
-  assert.deepEqual(contextLevel(150_000, st), { level: "heavy", text: "This thread is getting heavy, start a new thread for the next task" });
-  assert.deepEqual(contextLevel(300_000, st), { level: "full", text: "Start a new thread now" });
-  assert.equal(contextLevel(90_000, { heavyAt: 80_000, freshAt: 100_000 }).level, "heavy");
-  assert.deepEqual(thresholds(500_000, 200_000), { heavyAt: 500_000, freshAt: 500_000 }, "red never comes before amber");
-  assert.deepEqual(thresholds(1, 9e9), { heavyAt: 10_000, freshAt: 2_000_000 });
-  const { settings } = normalizeMap({});
-  assert.deepEqual([settings.freeze, settings.heavyAt, settings.freshAt], [true, 50_000, 100_000], "freezing is on, warnings at 50k and 100k by default");
-  assert.deepEqual(thresholds(normalizeMap({ settings: { heavyAt: 150_000, freshAt: 300_000 } }).settings.heavyAt, 0).heavyAt, 50_000, "maps on the old defaults move to the new ones");
-  assert.equal(normalizeMap({ settings: { heavyAt: 120_000, freshAt: 300_000 } }).settings.heavyAt, 120_000, "a chosen threshold is kept");
-});
-
-test("the map server reports each thread's context level and frozen files", async () => {
-  const root = project();
-  const store = new ContextStore(root);
-  const now = Date.now(), min = 60_000;
-  const transcript = join(root, "t1.jsonl");
-  writeFileSync(transcript, JSON.stringify({ message: { usage: { input_tokens: 10, cache_read_input_tokens: 60_000, output_tokens: 5 } } }) + "\n");
   mkdirSync(store.paths.weaveDir, { recursive: true });
-  appendEvent(store.paths, { t: now - 30 * min, s: "t1", ph: "end", verb: "Read", node: "src/ui/App.tsx", tool: "Read" });
-  writeFileSync(store.paths.threads, JSON.stringify({ t1: { id: "t1", name: "x", startedAt: now - 40 * min, lastSeen: now, transcript, prompts: [now - 40 * min, now - 20 * min, now] } }));
+  appendEvent(store.paths, ev(now - 30 * MIN, "t1", "src/ui/App.tsx"));
+  writeThread(store.paths, "t1", { name: "x", transcript: transcript(root, "t1", 170_000), prompts: [now - 40 * MIN, now] });
   const d = await startDashboard({ root, port: 3700, watch: false });
   const state = () => fetch(`${d.url}/api/state`).then((r) => r.json());
-  const post = (body) => fetch(`${d.url}/api/settings`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-  let t = (await state()).threads[0];
-  assert.equal(t.context.level, "heavy");
-  assert.deepEqual(t.frozen, ["src/ui/App.tsx"]);
-  assert.equal(t.next.preset.id, "full", "past the warning it suggests a new thread on the best fitting preset");
-  assert.ok(t.next.line.endsWith("[weave:full]. Last thread: 1 file read, 0 edited in src/ui/."));
-  await post({ freshAt: 55_000 });
-  t = (await state()).threads[0];
-  assert.equal(t.context.level, "full", "the thresholds are adjustable");
-  await post({ freeze: false });
-  assert.deepEqual((await state()).threads[0].frozen, []);
-  await d.close();
-  rmSync(root, { recursive: true, force: true });
-});
-
-test("MCP tools return paths only and persist changes", () => {
-  const root = project();
-  const tools = createTools(new ContextStore(root));
-  const ctx = JSON.parse(tools.weave_get_context.handler({}).content[0].text);
-  assert.ok(ctx.attached.some((a) => a.id === "src/ui"));
-  assert.ok(!JSON.stringify(ctx).includes("String(n)"), "never file contents");
-  const d = JSON.parse(tools.weave_detach.handler({ node: "src/ui" }).content[0].text);
-  assert.equal(d.ok, true);
-  assert.ok(!d.window.attached.some((a) => a.id === "src/ui"));
-  assert.ok(existsSync(join(root, ".claude/context-map.json")));
-  assert.equal(tools.weave_detach.handler({ node: "nope" }).isError, true);
-  const created = JSON.parse(tools.weave_create_preset.handler({ name: "UI work", features: ["src/ui"], makeDefault: true }).content[0].text);
-  assert.equal(created.window.preset, "ui-work");
-  rmSync(root, { recursive: true, force: true });
-});
-
-test("the optional API key lives outside the project with private permissions", () => {
-  const dir = mkdtempSync(join(tmpdir(), "weave-cfg-"));
-  process.env.WEAVE_CONFIG_DIR = dir;
-  const old = process.env.ANTHROPIC_API_KEY;
-  delete process.env.ANTHROPIC_API_KEY;
-  assert.equal(tokenMode().mode, "estimate");
-  assert.throws(() => saveKey("short"));
-  saveKey("sk-ant-test-0123456789abcdefghij");
-  assert.equal(readKey(), "sk-ant-test-0123456789abcdefghij");
-  assert.deepEqual(tokenMode(), { mode: "exact", source: "saved" });
-  if (process.platform !== "win32") assert.equal(statSync(join(dir, "anthropic-key")).mode & 0o777, 0o600);
-  removeKey();
-  assert.equal(tokenMode().mode, "estimate");
-  if (old) process.env.ANTHROPIC_API_KEY = old;
-  delete process.env.WEAVE_CONFIG_DIR;
-  rmSync(dir, { recursive: true, force: true });
-});
-
-test("the map server refuses other hosts and never returns the key", async () => {
-  const root = project();
-  const d = await startDashboard({ root, port: 3600, watch: false });
-  const ok = await fetch(`${d.url}/api/state`).then((r) => r.json());
-  assert.equal(ok.type, "state");
-  assert.ok(!JSON.stringify(ok).includes("sk-ant"));
-  const evil = await fetch(`${d.url}/api/toggle`, { method: "POST", headers: { "content-type": "application/json", origin: "http://evil.example" }, body: '{"node":"src/ui"}' });
-  assert.equal(evil.status, 403);
-  const form = await fetch(`${d.url}/api/toggle`, { method: "POST", headers: { "content-type": "text/plain" }, body: '{"node":"src/ui"}' });
-  assert.equal(form.status, 405);
-  const toggled = await fetch(`${d.url}/api/toggle`, { method: "POST", headers: { "content-type": "application/json" }, body: '{"node":"src/ui"}' }).then((r) => r.json());
-  assert.equal(toggled.result.attached, false);
+  const post = (path, body, headers = {}) => fetch(`${d.url}${path}`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
+  let s = await state();
+  assert.ok(s.areas.some((a) => a.agent === "weave-src-ui" && a.hasAgent));
+  assert.equal(s.threads[0].meter.level, "compact");
+  await post("/api/settings", { window: 1_000_000 });
+  s = await state();
+  assert.equal(s.threads[0].meter.level, "ok", "the window is adjustable");
+  assert.equal(s.map.settings.window, 1_000_000);
+  assert.equal((await post("/api/settings", { meter: false }, { origin: "http://evil.example" })).status, 403);
+  assert.equal((await fetch(`${d.url}/api/settings`, { method: "POST", headers: { "content-type": "text/plain" }, body: "{}" })).status, 405);
+  assert.equal((await post("/api/agents", {}).then((r) => r.json())).ok, true);
+  assert.ok(readdirSync(join(root, ".claude/agents")).includes("weave-src-ui.md"));
+  // fetch() refuses a malformed path, so send the raw request.
+  const status = await new Promise((done) => request({ host: "127.0.0.1", port: d.port, path: "/%E0%A4%A" }, (r) => done(r.statusCode)).end());
+  assert.equal(status, 400, "a malformed path is a bad request, not a crash");
+  assert.equal((await state()).type, "state", "still running");
   await d.close();
   rmSync(root, { recursive: true, force: true });
 });
@@ -397,90 +282,4 @@ test("port allocation falls back to the next free port", async () => {
   const got = await listenWithFallback(next, base, "127.0.0.1", 50);
   assert.ok(got > base);
   await Promise.all([new Promise((r) => blocker.close(r)), new Promise((r) => next.close(r))]);
-});
-
-test("a new thread is suggested on the preset that best covers the thread's work", () => {
-  const root = project();
-  const store = new ContextStore(root);
-  const now = Date.now();
-  const ev = (node, verb = "Read", s = "t1") => ({ t: now, s, ph: "end", verb, node, tool: "x" });
-  const { map } = store.load();
-  const events = [ev("src/ui/App.tsx"), ev("src/ui/theme.css", "Edit"), ev("src/ui/App.tsx", "Edit"), ev("docs/guide.md", "Read", "t2")];
-  assert.equal(handoff(map, events, "nobody", now), undefined, "nothing to hand off without activity");
-  assert.equal(bestPreset(map, events, "t1", now).id, "full", "only the full project fits at first");
-  const ui = createPreset(map, "UI", ["src/ui"]);
-  const api = createPreset(map, "API", ["src/api"]);
-  const h = handoff(map, events, "t1", now);
-  assert.equal(h.preset.id, ui.id, "the preset with the same share and fewer tokens wins");
-  assert.deepEqual([h.read, h.edited, h.folders], [2, 2, ["src/ui/"]]);
-  assert.equal(startPreset(h.line), ui.id);
-  map.settings.heavyAt = 10;
-  const none = handoff(map, events, "t1", now);
-  assert.equal(none.preset, undefined, "no preset fits under the warning");
-  assert.deepEqual(none.save, { name: "Amethyst · UI", files: 2 }, "so it offers to save the warm files, tagged by fixed rules");
-  assert.ok(api);
-  rmSync(root, { recursive: true, force: true });
-});
-
-test("a start line moves the new thread onto its preset, and title tools name threads", () => {
-  const root = project();
-  const store = new ContextStore(root);
-  store.update((m) => { createPreset(m, "UI", ["src/ui"]); });
-  const out = handleHook({ hook_event_name: "UserPromptSubmit", session_id: "t9", cwd: root, prompt: 'Continue with WEAVE preset "UI" [weave:ui]. Last thread: 2 files read, 1 edited in src/ui/.\nFix the header' });
-  assert.equal(store.load().map.assign.t9, "ui");
-  assert.match(JSON.parse(out.stdout).hookSpecificOutput.additionalContext, /WEAVE context window "UI"/);
-  assert.equal(readThreads(store.paths).t9.name, "Fix the header", "the start line is not the thread's name");
-  assert.equal(titleFrom("mcp__hearthbot__set_thread_label", { label: " WEAVE thread hand-off " }), "WEAVE thread hand-off");
-  assert.equal(titleFrom("Read", { label: "x" }), undefined);
-  handleHook({ hook_event_name: "PreToolUse", session_id: "t9", cwd: root, tool_name: "mcp__weave__weave_name_thread", tool_input: { name: "Header fixes" } });
-  assert.equal(readThreads(store.paths).t9.name, "Header fixes");
-  rmSync(root, { recursive: true, force: true });
-});
-
-test("an ended thread leaves the list while its preset and activity stay", () => {
-  const root = project();
-  const store = new ContextStore(root);
-  store.update((m) => { createPreset(m, "UI", ["src/ui"]); });
-  handleHook({ hook_event_name: "UserPromptSubmit", session_id: "a1", cwd: root, prompt: 'Continue with WEAVE preset "UI" [weave:ui].\nWork' });
-  handleHook({ hook_event_name: "UserPromptSubmit", session_id: "b2", cwd: root, prompt: "Other" });
-  handleHook({ hook_event_name: "PostToolUse", session_id: "a1", cwd: root, tool_name: "Read", tool_input: { file_path: join(root, "src/ui/App.tsx") } });
-  const events = recentEvents(store.paths).length;
-  assert.equal(removeThreads(store.paths, ["a1", "nope"]), 1, "only a known thread is counted");
-  assert.deepEqual(Object.keys(readThreads(store.paths)), ["b2"]);
-  assert.equal(store.load().map.assign.a1, "ui", "the preset still knows the thread's files");
-  assert.equal(recentEvents(store.paths).length, events, "activity is kept");
-  handleHook({ hook_event_name: "UserPromptSubmit", session_id: "a1", cwd: root, prompt: "Again" });
-  assert.ok(readThreads(store.paths).a1, "a thread that acts again comes back");
-  rmSync(root, { recursive: true, force: true });
-});
-
-test("auto-calibrate tells a thread once per warning, and auto presets replace themselves", () => {
-  const root = project();
-  const store = new ContextStore(root);
-  const now = Date.now();
-  const { map } = store.load();
-  const events = [{ t: now, s: "t1", ph: "end", verb: "Edit", node: "src/ui/App.tsx", tool: "Edit" }];
-  const save = () => { throw new Error("a fitting preset needs no save"); };
-  const line = calibrate(map, events, "t1", 60_000, "heavy", undefined, save, now);
-  assert.ok(line.startsWith("WEAVE: 60k tokens, past amber (50k). In one line, ask the user (or the session that started this thread) to start a new thread with: Continue with WEAVE preset"));
-  assert.equal(calibrate(map, events, "t1", 70_000, "heavy", "heavy", save, now), undefined, "said once per level");
-  assert.ok(calibrate(map, events, "t1", 120_000, "full", "heavy", save, now).includes("past red (100k)"), "and again at red");
-  map.settings.autoCalibrate = false;
-  assert.equal(calibrate(map, events, "t1", 120_000, "full", undefined, save, now), undefined, "the switch turns it off");
-  const files = [findNode(map, "src/ui/App.tsx")];
-  const a = presetFromFiles(map, files, true), b = presetFromFiles(map, files, true);
-  assert.equal(a.id, b.id, "an auto save refreshes its own preset");
-  assert.notEqual(presetFromFiles(map, files).id, a.id, "a manual save always adds one");
-  rmSync(root, { recursive: true, force: true });
-});
-
-test("saved presets take crystal names in a fixed order", () => {
-  const root = project();
-  const { map } = new ContextStore(root).load();
-  const ui = [findNode(map, "src/ui/App.tsx")], docs = [findNode(map, "docs/guide.md")];
-  assert.equal(presetFromFiles(map, ui).name, "Amethyst · UI");
-  assert.equal(presetFromFiles(map, docs).name, "Quartz · Docs", "the next unused crystal");
-  assert.equal(presetFromFiles(map, ui, true).name, "Obsidian · UI");
-  assert.equal(presetFromFiles(map, ui, true).name, "Obsidian · UI", "an auto save keeps its crystal");
-  rmSync(root, { recursive: true, force: true });
 });
