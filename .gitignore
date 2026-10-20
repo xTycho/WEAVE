@@ -30,3 +30,5 @@ coverage/
 .mcp.json
 CLAUDE.md
 .claude/
+.claude/weave/
+.claude/settings.local.json
