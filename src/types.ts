@@ -43,6 +43,8 @@ export interface Preset {
   asleep?: string[];
   /** Saved by auto-calibrate. A later auto save with the same name replaces it instead of adding another preset. */
   auto?: boolean;
+  /** What a saved preset holds, by `tagFor`: UI, Docs, Tests or a feature name. */
+  tag?: string;
   /** Last attach or detach time per node, so old rule evidence does not re-fire. */
   changedAt: Record<string, number>;
 }

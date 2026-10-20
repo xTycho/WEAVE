@@ -96,17 +96,35 @@ export function tagFor(map: ContextMap, files: WeaveNode[]): string {
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
+/** Names for saved presets, handed out in this order: the first one no preset uses yet. */
+export const CRYSTALS = [
+  "Amethyst", "Quartz", "Obsidian", "Opal", "Onyx", "Jade", "Topaz", "Garnet", "Citrine", "Sapphire",
+  "Emerald", "Ruby", "Moonstone", "Labradorite", "Malachite", "Lapis", "Peridot", "Aquamarine", "Tourmaline", "Fluorite",
+  "Selenite", "Celestite", "Azurite", "Morganite", "Tanzanite",
+];
+
+/** The first crystal name no preset has taken; past all 25, the list starts again with a number. */
+export function crystalName(map: ContextMap): string {
+  const taken = new Set(map.presets.map((p) => p.name.split(" · ")[0]));
+  for (let round = 1; ; round++) {
+    const hit = CRYSTALS.map((c) => (round === 1 ? c : `${c} ${round}`)).find((c) => !taken.has(c));
+    if (hit) return hit;
+  }
+}
+
 /**
  * Saves files as a preset: the features that hold them, with every other file
- * in those features detached. Named by `tagFor`.
+ * in those features detached. Named "<crystal> · <tag>", with the tag from
+ * `tagFor`, so the name is memorable and still says what is inside.
  */
 export function presetFromFiles(map: ContextMap, files: WeaveNode[], auto = false): Preset {
   const keep = new Set(files.map((n) => n.id));
   const features = [...new Set(files.map((n) => n.of[0]).filter((f): f is string => !!f))];
-  const name = tagFor(map, files);
-  // An auto save refreshes its own earlier preset of the same name, so presets do not pile up.
-  const old = auto ? map.presets.find((p) => p.auto && p.name === name) : undefined;
-  const preset = old ? Object.assign(old, { features, detached: [], changedAt: {} }) : createPreset(map, name, features);
+  const tag = tagFor(map, files);
+  // An auto save refreshes its own earlier preset with the same tag, so presets do not pile up.
+  const old = auto ? map.presets.find((p) => p.auto && p.tag === tag) : undefined;
+  const preset = old ? Object.assign(old, { features, detached: [], changedAt: {} }) : createPreset(map, `${crystalName(map)} · ${tag}`, features);
+  preset.tag = tag;
   if (auto) preset.auto = true;
   preset.detached = map.nodes.filter((n) => n.tier === "element" && n.kind !== "tool" && !keep.has(n.id) && isLive(n, preset)).map((n) => n.id);
   return preset;

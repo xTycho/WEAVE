@@ -214,7 +214,7 @@ test("a preset saved from heat keeps the warm files and is named by fixed rules"
   const { map } = store.load();
   assert.throws(() => presetFromHeat(map, getPreset(map), [], now), /Nothing is warm yet/);
   const p = presetFromHeat(map, getPreset(map), [ev("src/ui/App.tsx"), ev("src/ui/theme.css", "Edit")], now);
-  assert.equal(p.name, "UI", "mostly UI files");
+  assert.equal(p.name, "Amethyst · UI", "a crystal name, tagged as mostly UI files");
   assert.ok(isLive(findNode(map, "src/ui/App.tsx"), p) && isLive(findNode(map, "src/ui/theme.css"), p));
   assert.ok(!isLive(findNode(map, "src/api/server.ts"), p), "other features stay out");
   assert.equal(tagFor(map, [findNode(map, "docs/guide.md")]), "Docs");
@@ -417,7 +417,7 @@ test("a new thread is suggested on the preset that best covers the thread's work
   map.settings.heavyAt = 10;
   const none = handoff(map, events, "t1", now);
   assert.equal(none.preset, undefined, "no preset fits under the warning");
-  assert.deepEqual(none.save, { name: "UI", files: 2 }, "so it offers to save the warm files, tagged by fixed rules");
+  assert.deepEqual(none.save, { name: "Amethyst · UI", files: 2 }, "so it offers to save the warm files, tagged by fixed rules");
   assert.ok(api);
   rmSync(root, { recursive: true, force: true });
 });
@@ -454,5 +454,16 @@ test("auto-calibrate tells a thread once per warning, and auto presets replace t
   const a = presetFromFiles(map, files, true), b = presetFromFiles(map, files, true);
   assert.equal(a.id, b.id, "an auto save refreshes its own preset");
   assert.notEqual(presetFromFiles(map, files).id, a.id, "a manual save always adds one");
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("saved presets take crystal names in a fixed order", () => {
+  const root = project();
+  const { map } = new ContextStore(root).load();
+  const ui = [findNode(map, "src/ui/App.tsx")], docs = [findNode(map, "docs/guide.md")];
+  assert.equal(presetFromFiles(map, ui).name, "Amethyst · UI");
+  assert.equal(presetFromFiles(map, docs).name, "Quartz · Docs", "the next unused crystal");
+  assert.equal(presetFromFiles(map, ui, true).name, "Obsidian · UI");
+  assert.equal(presetFromFiles(map, ui, true).name, "Obsidian · UI", "an auto save keeps its crystal");
   rmSync(root, { recursive: true, force: true });
 });

@@ -552,7 +552,7 @@ function renderPresetActions() {
     return;
   }
   const custom = !isBase(p);
-  row.innerHTML = `<button class="btn fill" id="pheat" title="Make a preset from the files that are warm right now. It is named by fixed rules from those files.">Save warm files as preset</button>`
+  row.innerHTML = `<button class="btn fill" id="pheat" title="Make a preset from the files that are warm right now. It gets the next crystal name and a tag for what it holds.">Save warm files as preset</button>`
     + (custom ? '<button class="btn" id="pren">Rename</button><button class="btn" id="pcopy">Duplicate</button><button class="btn" id="pdel">Delete</button>' : "");
   row.querySelector("#pheat")!.addEventListener("click", async () => {
     try {

@@ -43,7 +43,7 @@ function preset(raw: unknown, i: number): Preset | undefined {
   const changed = obj(p.changedAt);
   return {
     id: p.id, name: str(p.name, p.id), color: str(p.color, PALETTE[i % PALETTE.length]),
-    features: strs(p.features), detached: strs(p.detached), asleep: strs(p.asleep), ...(p.auto === true ? { auto: true } : {}),
+    features: strs(p.features), detached: strs(p.detached), asleep: strs(p.asleep), ...(p.auto === true ? { auto: true } : {}), ...(typeof p.tag === "string" ? { tag: p.tag } : {}),
     changedAt: Object.fromEntries(Object.entries(changed).filter(([, v]) => typeof v === "number")) as Record<string, number>,
   };
 }

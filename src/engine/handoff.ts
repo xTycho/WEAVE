@@ -1,5 +1,5 @@
 import type { ActivityEvent, ContextMap, Preset, WeaveNode } from "../types.js";
-import { heat, tagFor, WARM_AT, WARM_MAX } from "./heat.js";
+import { crystalName, heat, tagFor, WARM_AT, WARM_MAX } from "./heat.js";
 import { isLive, summarize } from "./window.js";
 
 /**
@@ -86,7 +86,7 @@ export function handoff(map: ContextMap, events: ActivityEvent[], session: strin
   const best = bestPreset(map, events, session, now);
   if (best) return { ...out, preset: best, line: startLine(best, out) };
   const warm = threadWarm(map, events, session, now);
-  return warm.length ? { ...out, save: { name: tagFor(map, warm), files: warm.length } } : out;
+  return warm.length ? { ...out, save: { name: `${crystalName(map)} · ${tagFor(map, warm)}`, files: warm.length } } : out;
 }
 
 /** The preset id a start line names, if the prompt holds one. */
