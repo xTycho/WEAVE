@@ -1,7 +1,6 @@
-# WEAVE Context Router
-Load context on demand; never read `.claude/features/` wholesale.
-1. Start of task: call `weave_get_active_context` and read only the paths it returns.
-2. New feature area: call `weave_activate_node` with the feature id, then re-read the active paths.
-3. Finished or irrelevant area: call `weave_sever_node` to drop its context cord.
-4. If WEAVE tools are unavailable, read only files the user names explicitly.
-Feature notes live in `.claude/features/<id>/`; keep each file short and specific.
+# WEAVE context router
+Each thread starts with a short WEAVE note naming its context window: core files, attached folders and detached files.
+1. Work inside the attached folders first. Open files only when the task needs them.
+2. Skip detached files unless the user asks for them.
+3. Need another area? Call `weave_attach` with a folder or file. Done with one? Call `weave_detach`.
+4. `weave_map` lists features with token costs; `weave_get_context` lists the current window. Both return paths only.

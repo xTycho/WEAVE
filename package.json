@@ -1,7 +1,7 @@
 {
   "name": "weave",
-  "version": "0.1.0",
-  "description": "Ultra-lightweight Claude Code extension, MCP server and visual dashboard that routes active features and severs idle context cords.",
+  "version": "0.2.0",
+  "description": "A local, live network map of your project's context for Claude Code and Claude Desktop: automatic scanning, per-thread context windows and an MCP server.",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -11,10 +11,10 @@
   "keywords": [
     "claude",
     "claude-code",
+    "claude-desktop",
     "mcp",
     "context",
-    "react-flow",
-    "prompt"
+    "network-map"
   ],
   "bin": {
     "weave": "bin/weave.js"
@@ -29,7 +29,10 @@
     "dist",
     "src/ui/dist",
     "templates",
+    "docs",
     "README.md",
+    "AI_SETUP.md",
+    "THIRD_PARTY_NOTICES.md",
     "LICENSE"
   ],
   "engines": {
@@ -51,14 +54,11 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@fontsource/righteous": "^5.3.0",
+    "@fontsource/space-grotesk": "^5.3.0",
     "@types/node": "^26.6.5",
-    "@types/react": "^19.3.0",
-    "@types/react-dom": "^19.3.0",
     "@types/ws": "^8.18.2",
-    "@vitejs/plugin-react": "^6.1.2",
-    "@xyflow/react": "^12.12.0",
-    "react": "^19.3.1",
-    "react-dom": "^19.3.1",
+    "thinking-orbs": "^0.3.2",
     "typescript": "^7.0.2",
     "vite": "^8.3.4"
   }

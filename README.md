@@ -1,162 +1,206 @@
+<p align="center"><img src="docs/layers.svg" alt="WEAVE's three layers: the core context, the features it routes to, and the files each feature holds" width="880"></p>
+
 # WEAVE
 
-**Route active features. Sever idle context cords.**
+**A live network map of your project's context.** WEAVE runs on your computer. It shows which files Claude can see, lets you choose what each thread loads, and lights up as Claude reads, edits, runs commands and opens PRs.
 
-WEAVE is an ultra-lightweight, open-source extension for [Claude Code](https://claude.com/claude-code). It keeps prompts lean by turning your project knowledge into a small graph: a core router, the features you are working on, and the deep reference material around them. Claude asks WEAVE which paths matter *right now* and reads only those, instead of hauling every note into context.
-
-It ships three pieces in one package:
-
-- **CLI** (`bin/weave.js`): scaffolds `.claude/` in any project with one command.
-- **MCP server** (`src/mcp/`): three tools that return filtered path lists, never raw file contents.
-- **Visual dashboard** (`src/ui/`): a React Flow concentric network map with live glow and click-to-sever cords.
+- **It maps your real files.** WEAVE scans the project and builds the map from what is actually there. Nothing is a placeholder.
+- **It uses no tokens to build or run.** The scanner, the rules and the map are plain code. Claude is never asked to do the mapping.
+- **It stays local.** The map server only listens on `127.0.0.1`. The single exception is optional exact token counting, which you have to turn on yourself (see [Token counts](#token-counts)).
 
 ---
 
-## The 3-tier concentric map
+## How the map works
+
+The map has three layers:
 
 ```
-                 . - - - - - - - - - - - - - - - - - - - .
-               /            RING 2 : OUTER CONTEXT         \
-              /   [sessions]                    [schema]     \
-             |        :                            |          |
-             |    . - : - - - - - - - - - - - - -  | - .      |
-             |   /    :      RING 1 : FEATURES     |    \     |
-             |  |  ( auth )                     (  api  )-[errors]
-             |  |       :                       //      |     |
-             |  |        :      +--------+     //       |     |
-             |  |         :.....|  CORE  |=====         |     |
-             |  |               +--------+              |     |
-             |  |                   ||                  |     |
-             |  |                (  ui  )               |     |
-             |   \                  ||                  /     |
-             |    ' - - - - - - - - || - - - - - - - - '      |
-              \                  [tokens]                    /
-               \                                            /
-                 ' - - - - - - - - - - - - - - - - - - - - '
-
-  ==== / ||   live cord     paths are in context (api, ui active)
-  .... / :     severed cord  nothing loaded (auth severed)
-  ----         idle cord     dormant until its feature is activated
-  ring 0  CORE           CLAUDE.md router, always loaded (< 15 lines)
-  ring 1  FEATURES       .claude/features/<id>/          loaded when activated
-  ring 2  OUTER CONTEXT  .claude/features/<id>/context/* loaded with a live parent
+your-project                     ← 1 · Core: CLAUDE.md, README, package.json. Every thread sees it.
+├── src/ui        (attached)     ← 2 · Features: top-level folders, workspaces, or src/<name>
+│   ├── App.tsx
+│   └── format.ts ◄──┐           ← 3 · Elements: the files. A file imported by two features
+├── src/api       (attached)  │       is shared and sits between them.
+│   ├── server.ts             │
+│   └── format.ts ────────────┘
+└── src/billing   (detached)     ← Detached: Claude skips it unless you ask
+    └── invoice.ts
 ```
 
-A node's paths are in context only if its cord reaches the core unbroken. Sever a feature and everything hanging off it drops out with it.
+- **Presets** are saved context windows: the features a thread loads, minus any files you detached. You can save as many as you like.
+- **Threads** are your Claude Code sessions. Each one runs on a preset, and several threads can share one. Pick a thread's preset in the map's Threads panel.
+- **Cords** connect the layers. Click a cord, or use Detach in the node panel, to take something out of the window. Click it again to bring it back.
+
+### What you see live
+
+| Claude does | On the map |
+|---|---|
+| Reads a file | A pulse flows **in** from the file to the core. Its size and label show the tokens it adds. |
+| Edits a file | A pulse flows **out** from the core to the file. |
+| Runs a command | A pulse goes out to the tool (`npm run test`, Shell, Git) and the output comes back. |
+| Opens a PR | Every file the thread edited sends its change to the core, then one bundle goes to Git. |
+
+While Claude works on a node, a tag on it expands in the preset's colour, with a small animated orb, the action and the elapsed seconds. You can pick Calm, Pulse (the default) or Neural motion. Zoom out and the cards collapse into labelled boxes, like a graph view.
+
+### Suggestions are fixed rules, not AI
+
+- **Asked while detached:** Claude read or edited a file that is detached from its thread's window.
+- **Linked file:** a detached file tests, or is imported by, a file that was just edited.
+- **Unused:** an attached file nobody touched in the last 10 actions. Detaching it would save its tokens.
+
+The **Apply automatically** switch only ever reattaches. Detaching always waits for you. When Claude asks for a detached file you choose between **Allow and flag** (the default: it works, and the map marks it) and **Block** (Claude Code is told the file is detached and should ask you).
 
 ---
 
-## Quick start
+## Install
 
-Run inside the project you want Claude to work on:
+Requires Node.js 18.17 or newer.
 
 ```bash
-npx github:xTycho/WEAVE init
+npm install -g github:xTycho/WEAVE      # gives you the `weave` command
+cd /path/to/your-project
+weave init                              # scan, write the map, register MCP and hooks
+weave ui                                # open http://127.0.0.1:3000
 ```
 
-This creates (and never overwrites existing files without `--force`):
+`weave init` does five things in your project, and you can run it again at any time:
 
-| Path | Purpose |
-| --- | --- |
-| `CLAUDE.md` | A 7-line router telling Claude to ask WEAVE for context. Appended if the file exists. |
-| `.claude/context-map.json` | Local graph state. Added to your `.gitignore`. |
-| `.claude/features/<id>/…` | Short starter notes for the example features. Rename or replace them. |
-| `.mcp.json` | Registers the `weave` MCP server for Claude Code. |
+1. It adds a short WEAVE section to `CLAUDE.md`. It only appends, and it never overwrites your text.
+2. It scans the project into `.claude/context-map.json`.
+3. It registers the `weave` MCP server in `.mcp.json`, using absolute paths.
+4. It adds activity hooks to `.claude/settings.local.json`, which is your local, uncommitted settings file. Skip this with `--no-hooks`.
+5. It adds WEAVE's local state to `.gitignore`.
 
-Restart Claude Code so it picks up the MCP server, then open the dashboard:
+Restart Claude Code afterwards so it loads the tools and hooks.
+
+## Claude Desktop (global config)
+
+Claude Desktop reads its MCP servers from one global file:
+
+| OS | Config file |
+|---|---|
+| macOS | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| Windows | `%APPDATA%\Claude\claude_desktop_config.json` |
+| Linux | `~/.config/Claude/claude_desktop_config.json` |
+
+Let WEAVE write the entry for you. It uses absolute paths, so the location Desktop starts from does not matter:
 
 ```bash
-npx github:xTycho/WEAVE ui            # http://127.0.0.1:3000 (or the next free port)
+cd /path/to/your-project
+weave desktop            # print the entry
+weave desktop --write    # merge it into the config file
 ```
 
-### CLI reference
-
-```
-weave init [--force]      Scaffold .claude/, CLAUDE.md router and .mcp.json
-weave ui [--port <n>]     Start the dashboard (default 3000, falls back to 3001, 3002, ...)
-weave mcp                 Run the MCP server over stdio (Claude Code launches this)
-weave status              Print the active context paths
-weave help                Show help
-```
-
-All commands accept `--dir <path>` to target another project. `WEAVE_PORT` or `PORT` sets the starting port.
-
----
-
-## MCP tools
-
-| Tool | Input | Returns |
-| --- | --- | --- |
-| `weave_get_active_context` | none | `{ active, paths, missing, available, source }` |
-| `weave_activate_node` | `{ id }` | `{ activated, paths }`. Activating outer context also wakes its parent feature. |
-| `weave_sever_node` | `{ id }` | `{ severed, remaining }`. Severing a feature drops its outer context. The core cannot be severed. |
-
-Every response is compact JSON containing project-relative **paths only**. Paths that do not exist on disk are filtered out and only counted in `missing`. Unknown ids return a structured error with suggestions instead of failing the session.
-
-**Graceful failover.** If `.claude/context-map.json` is missing or corrupt, WEAVE never crashes: it rebuilds the graph from a scan of `.claude/features/`, then falls back to the bundled starter map, then to a core-only map. The response's `source` field tells you which one was used (`file`, `scan`, `default`, `empty`).
-
----
-
-## Organising features
-
-```
-.claude/features/
-  billing/
-    feature.json          optional: { "label": "Billing", "paths": [...], "context": [...] }
-    overview.md           feature-tier notes (loaded when billing is active)
-    context/
-      invoices.md         outer-context node "billing.invoices"
-      tax-rules.md        outer-context node "billing.tax-rules"
-```
-
-New folders are discovered automatically and merged into the map, so you can add a feature by creating a directory. The scanner only lists paths; it never reads note contents.
-
-`feature.json` lets a feature point at real source files instead of notes:
+The entry looks like this (your paths will differ):
 
 ```json
 {
-  "label": "Billing",
-  "paths": ["src/billing/README.md"],
-  "context": [{ "id": "stripe", "label": "Stripe webhooks", "paths": ["docs/stripe-webhooks.md"] }]
+  "mcpServers": {
+    "weave": {
+      "command": "/usr/local/bin/node",
+      "args": ["/usr/local/lib/node_modules/weave/bin/weave.js", "mcp", "--dir", "/Users/you/code/your-project"]
+    }
+  }
 }
 ```
 
----
-
-## Dashboard
-
-- **Concentric layout**: core in the centre, features on the inner ring, outer context fanned around its parent.
-- **Real-time glow**: the dashboard watches `.claude/`, so when Claude calls an MCP tool in another process the affected nodes pulse within a second over WebSocket.
-- **Interactive cords**: click a node to activate or sever it, click a cord to sever or restore the node it feeds, drag nodes to rearrange.
-- **Active context panel**: the exact path list Claude will receive.
-
-The UI is pre-built into `src/ui/dist` and committed, so `npx` users get it instantly with no frontend toolchain. The server binds to `127.0.0.1` by default.
+Restart Claude Desktop. The MCP server keeps a debounced watch on `.claude/context-map.json`. When you toggle something in the map, the server picks it up straight away and tells Desktop that the context changed, so you don't need to restart.
 
 ---
+
+## Tutorial: automatic mapping and token efficiency
+
+**1. Let the scanner do the first pass.** Run `weave init` and open the map. Root files become the core. Each top-level folder becomes a feature, and so does each sub-folder of `src/`, `lib/`, `packages/` or `apps/`. Files become elements. Imports, including tsconfig `paths` aliases and workspace packages, mark which files are shared between features. Tests are linked to the code they import. Package scripts become tool nodes. Big features fold their sub-folders into one node each, so the map stays readable.
+
+**2. Make a preset per kind of task.** Select a preset, click **New**, and give it a name like "UI work". Then detach the features that task doesn't need by clicking their cords. The meter at the top shows how many tokens the window holds.
+
+**3. Point each thread at a preset.** Open the Threads panel and choose a preset for each thread. When a new thread starts, Claude Code receives a short note naming its window: core files, attached folders, and detached files to skip. The note costs about 100 to 200 tokens however big the project is, because it lists folders, not file contents.
+
+**4. Let Claude adjust the window.** Claude can call these MCP tools, and each one returns paths and ids, never file contents:
+
+| Tool | What it does |
+|---|---|
+| `weave_get_context` | Lists the window: core files, attached folders, detached files |
+| `weave_map` | Lists features and presets with their token cost |
+| `weave_attach` / `weave_detach` | Adds or removes a feature or file (by id, path or label) |
+| `weave_create_preset` | Saves a new window, optionally as the default for new threads |
+| `weave_is_attached` | Checks whether one path is in the window |
+
+**5. Start a feature from a design.** Select a design node (CSS, SVG or theme tokens) and click **New feature from this**. If you pick a saved preset under **Bring a saved context window**, everything in that preset joins the new feature, so its context comes along.
+
+### Structuring a project for fewer tokens
+
+- **Keep `CLAUDE.md` short.** It is in every thread. Put area-specific notes in that area's folder, so they load only when the feature is attached.
+- **One concern per folder.** WEAVE makes features from folders, so a clear folder layout gives you clean presets.
+- **Watch the shared nodes.** A file shared by many features is pulled into all of them. Splitting a big shared file often saves more than detaching a feature.
+- **Detach generated and vendored code** you never want Claude to read.
+- **Let the Unused rule help.** It points at the largest file nobody touched for a while.
+
+### Where the savings come from
+
+The note WEAVE adds to a thread is small, about 100 to 200 tokens. The saving comes from Claude reading fewer files: it starts out knowing which folders matter and which to skip, so it searches and opens less. How much that saves depends on the project and the task.
+
+---
+
+## Token counts
+
+By default every count is an **estimate**: the file's size divided by 4. It runs fully offline.
+
+For **exact** counts, add an Anthropic API key, either in the map under **Token counting** or with `weave key set`, which hides what you type. You can also set `ANTHROPIC_API_KEY` in the environment. How the key is handled:
+
+- It is stored in a private file in your user config folder: `~/.config/weave/` on Linux and macOS, `%APPDATA%\weave\` on Windows. The file is readable only by you. The key is never stored in the project, the map file or git.
+- The map can save or remove the key, but it can never read it back. Claude never sees it.
+- Counting sends each file's text, with the key, to Anthropic's free `count_tokens` endpoint. Nothing else is sent anywhere. Each file is counted once and counted again only when it changes.
+
+Run `weave key remove` to go back to estimates.
+
+## Commands
+
+```
+weave init [--no-hooks]     scan, write the map, register MCP and hooks
+weave ui [--port 3000]      open the map (walks to the next port if 3000 is taken)
+weave mcp                   MCP server over stdio (Claude Code and Claude Desktop)
+weave desktop [--write]     Claude Desktop config with absolute paths
+weave scan                  rescan now (the map also rescans when files change)
+weave status [--preset id]  print the note a new thread receives
+weave key set|remove        optional exact token counting
+```
+
+Every command takes `--dir <path>` to point at a project other than the current folder.
+
+## Files WEAVE writes
+
+| Path | What it holds | In git? |
+|---|---|---|
+| `.claude/context-map.json` | Scanned nodes, presets, thread assignments, settings | No |
+| `.claude/weave/activity.jsonl` | What threads did (tool, file, time); rotates at 512 KB | No |
+| `.claude/weave/threads.json` | Thread names and transcript paths | No |
+| `.claude/weave/token-cache.json` | Exact counts per file, when a key is set | No |
+| `.claude/settings.local.json` | The activity hooks | No |
+
+## Project layout
+
+```
+bin/weave.js            CLI
+src/scanner/            file listing, import parsing, the three-layer scan
+src/engine/             context windows, rules, activity log, token counts
+src/store.ts            reads and writes the map file (atomic, never throws on read)
+src/server/             local HTTP + WebSocket server for the map
+src/mcp/                MCP server and tools
+src/hooks/              Claude Code hook handler
+src/ui/                 the map (Vite); src/ui/dist is committed so it works without a build
+```
+
+The routing layer in `src/engine/window.ts` decides what is in a window from the map file alone. It never edits your project files, and it never edits `CLAUDE.md` after `init`.
 
 ## Development
 
 ```bash
-git clone https://github.com/xTycho/WEAVE.git && cd WEAVE
-npm install          # also compiles the server via the prepare script
-npm run build        # compiles src/ to dist/ and rebuilds src/ui/dist
-npm test             # engine, failover, MCP tool and port-fallback tests
-npm run dev:ui       # Vite dev server, proxies to a running `weave ui` on :3000
-```
-
-Layout:
-
-```
-bin/weave.js                   CLI (init, ui, mcp, status)
-src/index.ts                   dashboard server, WebSocket hub, file watcher, port fallback
-src/store.ts                   context-map.json persistence with failover chain
-src/graph.ts                   activate / sever / restore and active-path resolution
-src/scanner/context-scanner.ts .claude/features/ discovery
-src/mcp/server.ts, tools.ts    MCP server and tool definitions
-src/ui/                        React + React Flow dashboard (pre-built to src/ui/dist)
-templates/                     CLAUDE.md router and anonymised starter map
+npm install
+npm run build      # server (tsc) and map (vite)
+npm test
+npm run dev:ui     # map with hot reload; run `weave ui` alongside it for the API
 ```
 
 ## License
 
-[MIT](LICENSE)
+MIT. Third-party notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
