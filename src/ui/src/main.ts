@@ -83,9 +83,9 @@ const areaOfNode = (n: WNode) => { const f = featureOf(n); return f ? S?.areas.f
 const inArea = (n: WNode, a = area()) => !a || n.tier === "core" || a.features.includes(featureOf(n) ?? "");
 
 /** Thread names come from the first prompt; wrapper blocks and tags are not a name. Unnamed threads are numbered by start. */
-const WRAPPERS = /<(system-reminder|relay|wake|note|command-[\w-]+|local-command-[\w-]+)\b[^>]*>[\s\S]*?<\/\1>/gi;
+const WRAPPERS = /<(system-reminder|relay|wake|note|project_claude_message|task-notification|agent-message|command-[\w-]+|local-command-[\w-]+)\b[^>]*>[\s\S]*?<\/\1\b[^>]*>/gi;
 function threadLabel(t: Thread): string {
-  const clean = t.name.replace(WRAPPERS, " ").replace(/<(system-reminder|relay|wake|note|command-[\w-]+|local-command-[\w-]+)\b[\s\S]*$/i, " ")
+  const clean = t.name.replace(WRAPPERS, " ").replace(/<(system-reminder|relay|wake|note|project_claude_message|task-notification|agent-message|command-[\w-]+|local-command-[\w-]+)\b[\s\S]*$/i, " ")
     .replace(/<\/?[a-z][\w-]*\b[^>]*>?/gi, " ").replace(/\s+/g, " ").trim();
   if (clean && !/^Thread [0-9a-z-]{6}$/i.test(clean)) return clean;
   const order = [...S!.threads].sort((a, b) => a.startedAt - b.startedAt);

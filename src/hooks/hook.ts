@@ -68,8 +68,8 @@ const context = (event: string, text: string): HookOutput =>
   ({ stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: text } }), exitCode: 0 });
 
 /** Wrappers that tools and other sessions put around a prompt. They say nothing about the thread. */
-const WRAPPERS = /<(system-reminder|relay|wake|note|command-[\w-]+|local-command-[\w-]+)\b[^>]*>[\s\S]*?<\/\1>/gi;
-const UNCLOSED = /<(system-reminder|relay|wake|note|command-[\w-]+|local-command-[\w-]+)\b[\s\S]*$/i;
+const WRAPPERS = /<(system-reminder|relay|wake|note|project_claude_message|task-notification|agent-message|command-[\w-]+|local-command-[\w-]+)\b[^>]*>[\s\S]*?<\/\1\b[^>]*>/gi;
+const UNCLOSED = /<(system-reminder|relay|wake|note|project_claude_message|task-notification|agent-message|command-[\w-]+|local-command-[\w-]+)\b[\s\S]*$/i;
 
 /** A short thread name from its first prompt: wrapper blocks and tags removed. Empty when nothing readable is left. */
 export function threadName(prompt: string): string {

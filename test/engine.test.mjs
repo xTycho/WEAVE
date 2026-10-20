@@ -216,6 +216,8 @@ test("thread names drop wrapper blocks and tags, and title tools name threads", 
   assert.equal(threadName("<wake reason=\"mention\">hi</wake>"), "");
   assert.equal(threadName("Make the <b>map</b> faster"), "Make the map faster");
   assert.equal(threadName('Hello <relay from="coordinator" session="s'), "Hello", "an unclosed wrapper is dropped too");
+  assert.equal(threadName('<system-reminder id="a1">[Subagent hand-back] report</system-reminder id="a1"> Fix it'), "Fix it", "a closing tag can carry attributes");
+  assert.equal(threadName("<project_claude_message session=\"s\">note</project_claude_message>"), "", "relays from other sessions are not a name");
   assert.equal(titleFrom("mcp__hearthbot__set_thread_label", { label: " WEAVE thread hand-off " }), "WEAVE thread hand-off");
   assert.equal(titleFrom("Read", { label: "x" }), undefined);
 });
