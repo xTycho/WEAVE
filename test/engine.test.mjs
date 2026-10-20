@@ -445,7 +445,7 @@ test("auto-calibrate tells a thread once per warning, and auto presets replace t
   const events = [{ t: now, s: "t1", ph: "end", verb: "Edit", node: "src/ui/App.tsx", tool: "Edit" }];
   const save = () => { throw new Error("a fitting preset needs no save"); };
   const line = calibrate(map, events, "t1", 60_000, "heavy", undefined, save, now);
-  assert.match(line, /^WEAVE: 60k tokens, past amber \(50k\)\. Tell the user in one line to start a new thread with: Continue with WEAVE preset/);
+  assert.ok(line.startsWith("WEAVE: 60k tokens, past amber (50k). In one line, ask the user (or the session that started this thread) to start a new thread with: Continue with WEAVE preset"));
   assert.equal(calibrate(map, events, "t1", 70_000, "heavy", "heavy", save, now), undefined, "said once per level");
   assert.ok(calibrate(map, events, "t1", 120_000, "full", "heavy", save, now).includes("past red (100k)"), "and again at red");
   map.settings.autoCalibrate = false;

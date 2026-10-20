@@ -118,5 +118,5 @@ export function calibrate(
   if (!preset) return undefined;
   const limit = level === "full" ? map.settings.freshAt : map.settings.heavyAt;
   const k = (v: number) => `${Math.round(v / 1000)}k`;
-  return `WEAVE: ${k(tokens)} tokens, past ${level === "full" ? "red" : "amber"} (${k(limit)}). Tell the user in one line to start a new thread with: ${startLine(preset, h)}`;
+  return `WEAVE: ${k(tokens)} tokens, past ${level === "full" ? "red" : "amber"} (${k(limit)}). In one line, ask the user (or the session that started this thread) to start a new thread with: ${startLine(preset, h)}`;
 }
