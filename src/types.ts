@@ -58,6 +58,12 @@ export interface Settings {
   autoApply: boolean;
   /** Rank attached files warm or cold by recent use and tell threads to start with the warm ones. */
   warmCold: boolean;
+  /** Tell each thread which files it has moved on from, per message. Per thread only; never written into presets. */
+  freeze: boolean;
+  /** Context tokens from which a thread is told to run /compact. */
+  heavyAt: number;
+  /** Context tokens from which a thread is told to start fresh. */
+  freshAt: number;
   gate: Gate;
   idleAfter: number;
   defaultPreset: string;
@@ -111,6 +117,8 @@ export interface ThreadInfo {
   startedAt: number;
   lastSeen: number;
   transcript?: string;
+  /** Times of the thread's last few user messages, oldest first. */
+  prompts?: number[];
   /** Tokens in the thread's context window, read from its transcript. */
   contextTokens?: number;
 }

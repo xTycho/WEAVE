@@ -2,14 +2,15 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startDashboard } from "./server/dashboard.js";
 
-export { ContextStore, mergeScan, normalizeMap } from "./store.js";
+export { ContextStore, mergeScan, normalizeMap, thresholds } from "./store.js";
 export { scanProject, kindOf, MAX_ELEMENTS, ROOT_FEATURE } from "./scanner/project-scanner.js";
 export { listFiles } from "./scanner/files.js";
 export { scanImports } from "./scanner/imports.js";
 export { startMcpServer } from "./mcp/server.js";
 export { startDashboard, listenWithFallback } from "./server/dashboard.js";
 export { handleHook, classify, threadName } from "./hooks/hook.js";
-export { suggestions } from "./engine/rules.js";
+export { suggestions, contextLevel } from "./engine/rules.js";
+export { frozen, frozenLine, FREEZE_AFTER, KEEP_PROMPTS, FROZEN_CHARS } from "./engine/freeze.js";
 export { heat, warmth, overdue, tagFor, presetFromHeat, OVERDUE_DAYS, HALF_LIFE, WARM_AT, WARM_MAX, HOT_AT, HOT_MAX } from "./engine/heat.js";
 export { readKey, saveKey, removeKey, tokenMode, countExact } from "./engine/tokens.js";
 export { appendEvent, recentEvents, readThreads, transcriptTokens } from "./engine/activity.js";

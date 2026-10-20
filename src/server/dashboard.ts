@@ -5,11 +5,12 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 import { ActivityTail, readThreads, recentEvents, transcriptTokens } from "../engine/activity.js";
 import { heat, overdue, presetFromHeat, warmth } from "../engine/heat.js";
-import { suggestions } from "../engine/rules.js";
+import { frozen } from "../engine/freeze.js";
+import { contextLevel, suggestions } from "../engine/rules.js";
 import { countExact, removeKey, saveKey, tokenMode } from "../engine/tokens.js";
 import { attach, createPreset, deletePreset, detach, findNode, getPreset, sleep, spinUp, toggle, WeaveError } from "../engine/window.js";
 import { listFiles } from "../scanner/files.js";
-import { ContextStore } from "../store.js";
+import { ContextStore, thresholds } from "../store.js";
 import type { ActivityEvent, ContextMap, Suggestion, ThreadInfo } from "../types.js";
 import { watchFiles, watchProject, type Watcher } from "../watch.js";
 
@@ -76,7 +77,8 @@ export interface StatePayload {
   type: "state";
   project: string;
   map: Omit<ContextMap, "links" | "overrides" | "custom" | "dismissed">;
-  threads: (ThreadInfo & { preset: string })[];
+  /** Each thread with its preset, its context level by fixed rules, and the node ids frozen for it (empty when freezing is off). */
+  threads: (ThreadInfo & { preset: string; context: ReturnType<typeof contextLevel>; frozen: string[] })[];
   suggestions: Record<string, Suggestion[]>;
   /** Preset id -> its warm files (hottest first), hot files and overdue files. Warm and hot are empty when warm and cold is off. */
   warm: Record<string, { warm: string[]; hot: string[]; overdue: string[] }>;
@@ -109,7 +111,13 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
     const { map } = store.load();
     const week = Date.now() - 7 * 864e5;
     const threads = Object.values(readThreads(store.paths)).filter((t) => t.lastSeen > week).sort((a, b) => b.lastSeen - a.lastSeen).slice(0, 20)
-      .map((t) => ({ ...t, preset: map.assign[t.id] ?? map.settings.defaultPreset, contextTokens: transcriptTokens(t.transcript) }));
+      .map((t) => {
+        const contextTokens = transcriptTokens(t.transcript);
+        return {
+          ...t, preset: map.assign[t.id] ?? map.settings.defaultPreset, contextTokens, context: contextLevel(contextTokens, map.settings),
+          frozen: map.settings.freeze ? frozen(map, events, t.id, t.prompts).map((n) => n.id) : [],
+        };
+      });
     const { links: _l, overrides: _o, custom: _c, dismissed: _d, ...rest } = map;
     return {
       type: "state", project: map.nodes.find((n) => n.tier === "core")?.label ?? basename(store.root), map: rest, threads,
@@ -157,7 +165,10 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
     "/api/assign": (b) => act(b, (m) => { const t = s(b.thread); if (!t) throw new WeaveError("Missing thread."); m.assign[t] = getPreset(m, s(b.preset)).id; }),
     "/api/settings": (b) => act(b, (m) => {
       if (typeof b.autoApply === "boolean") m.settings.autoApply = b.autoApply;
-      if (typeof b.warmCold === "boolean") m.settings.warmCold = b.warmCold;      if (b.gate === "flag" || b.gate === "block") m.settings.gate = b.gate;
+      if (typeof b.warmCold === "boolean") m.settings.warmCold = b.warmCold;
+      if (typeof b.freeze === "boolean") m.settings.freeze = b.freeze;
+      if (typeof b.heavyAt === "number" || typeof b.freshAt === "number") Object.assign(m.settings, thresholds(b.heavyAt ?? m.settings.heavyAt, b.freshAt ?? m.settings.freshAt));
+      if (b.gate === "flag" || b.gate === "block") m.settings.gate = b.gate;
       if (typeof b.idleAfter === "number") m.settings.idleAfter = Math.min(500, Math.max(3, Math.round(b.idleAfter)));
     }),
     "/api/spin": (b) => act(b, (m) => spinUp(m, s(b.preset), s(b.design) ?? "", s(b.name) ?? "", s(b.bring) || undefined)),
@@ -226,6 +237,9 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
       pushState();
     }, 40));
     watchers.push(watchProject(store.root, () => { store.rescan(); void count(); }));
+    // Files freeze as time passes, without any event, so refresh open maps once a minute.
+    const tick = setInterval(() => { if (clients.size) pushState(); }, 60_000);
+    watchers.push({ close: () => clearInterval(tick) });
   }
 
   const startPort = opts.port ?? (Number(process.env.WEAVE_PORT) || 3000);

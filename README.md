@@ -53,6 +53,10 @@ Settings are in the gear menu in the top bar. **Reattach files Claude asks for**
 
 **Warm and cold context** (on by default) ranks attached files by how much threads use them. A file's heat is its reads plus twice its edits, halved every three days. The hottest files (up to 12) are warm: a new thread's note lists them under "Warm, start here", and the map gives them a glow. Every other attached file is cold: still attached and never blocked, but the note tells Claude to open it only when the task needs it, and the map fades it back. The top three warm files with a heat of 10 or more are hot and give off embers. It is plain arithmetic over the activity log, with no model involved, so the same activity always gives the same result. Nothing is detached and presets are never edited, so a cold file that gets used simply warms up again. Until something has been used, the note stays as it was. When Claude asks for a detached file you choose between **Allow and flag** (the default: it works, and the map marks it) and **Block** (Claude Code is told the file is detached and should ask you).
 
+**Freeze per thread** (on by default) works per thread, not per preset. A file a thread read or edited earlier, but not in its last 10 minutes or its last 2 messages, is frozen for that thread only. With each message the thread gets one short line, about 30 to 60 tokens, grouped by folder: "Frozen, skip unless needed: ...". Nothing is blocked or detached, presets are never edited, and a frozen file unfreezes the moment the thread reads or edits it again. Click a thread in the Context panel to frost its frozen files on the map; click it again to stop.
+
+**Context warnings** use the context size the map already reads from each thread's transcript. From 150k tokens the thread's row turns amber with "This thread is getting heavy, run /compact"; from 300k it turns red with "Start a fresh thread for the next task". Both thresholds can be changed in the gear menu. Like everything else here, these are fixed rules with no model involved.
+
 ---
 
 ## Install

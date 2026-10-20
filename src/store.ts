@@ -13,7 +13,14 @@ export interface LoadedMap {
 }
 
 const KINDS: Kind[] = ["core", "feature", "code", "design", "doc", "test", "tool"];
-const DEFAULT_SETTINGS: Settings = { autoApply: false, warmCold: true, gate: "flag", idleAfter: 10, defaultPreset: "full" };
+const DEFAULT_SETTINGS: Settings = { autoApply: false, warmCold: true, freeze: true, heavyAt: 150_000, freshAt: 300_000, gate: "flag", idleAfter: 10, defaultPreset: "full" };
+
+/** Context thresholds stay between 10k and 2M tokens, and fresh is never below heavy. */
+export function thresholds(heavy: unknown, fresh: unknown): { heavyAt: number; freshAt: number } {
+  const clamp = (v: unknown, d: number) => Math.min(2_000_000, Math.max(10_000, Math.round(Number(v)) || d));
+  const heavyAt = clamp(heavy, DEFAULT_SETTINGS.heavyAt);
+  return { heavyAt, freshAt: Math.max(heavyAt, clamp(fresh, DEFAULT_SETTINGS.freshAt)) };
+}
 
 const str = (v: unknown, d = "") => (typeof v === "string" ? v : d);
 const strs = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
@@ -71,6 +78,8 @@ export function normalizeMap(raw: unknown): ContextMap {
     settings: {
       autoApply: s.autoApply === true,
       warmCold: s.warmCold !== false,
+      freeze: s.freeze !== false,
+      ...thresholds(s.heavyAt, s.freshAt),
       gate: s.gate === "block" ? "block" : "flag",
       idleAfter: Math.min(500, Math.max(3, Number(s.idleAfter) || DEFAULT_SETTINGS.idleAfter)),
       defaultPreset: str(s.defaultPreset, presets[0]?.id ?? DEFAULT_SETTINGS.defaultPreset),

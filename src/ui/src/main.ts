@@ -8,9 +8,9 @@ type Kind = "core" | "feature" | "code" | "design" | "doc" | "test" | "tool";
 type Verb = "Read" | "Edit" | "Run" | "PR";
 interface WNode { id: string; label: string; tier: Tier; kind: Kind; paths: string[]; of: string[]; bytes: number; tokens: number; exact?: boolean; custom?: boolean; command?: string }
 interface Preset { id: string; name: string; color: string; features: string[]; detached: string[]; asleep?: string[] }
-interface Thread { id: string; name: string; preset: string; startedAt: number; lastSeen: number; contextTokens?: number }
+interface Thread { id: string; name: string; preset: string; startedAt: number; lastSeen: number; contextTokens?: number; context?: { level: "ok" | "heavy" | "full"; text?: string }; frozen?: string[] }
 interface Suggestion { rule: string; node: string; attach: boolean; text: string; key: string }
-interface Settings { autoApply: boolean; warmCold: boolean; gate: "flag" | "block"; idleAfter: number; defaultPreset: string }
+interface Settings { autoApply: boolean; warmCold: boolean; freeze: boolean; heavyAt: number; freshAt: number; gate: "flag" | "block"; idleAfter: number; defaultPreset: string }
 interface State {
   project: string;
   map: { nodes: WNode[]; presets: Preset[]; assign: Record<string, string>; settings: Settings };
@@ -67,6 +67,8 @@ let byId = new Map<string, Node>();
 let shape = "";
 let P = store.get("weave.preset") ?? "";
 let selected: string | null = null;
+/** The thread whose frozen files the map shows. */
+let selThread: string | null = store.get("weave.thread") || null;
 let hits = new Set<string>();
 const els: Record<string, HTMLDivElement> = {};
 const cords: Record<string, SVGPathElement> = {};
@@ -96,6 +98,8 @@ const warmIds = () => new Set(S?.warm?.[preset().id]?.warm ?? []);
 const hotIds = () => new Set(S?.warm?.[preset().id]?.hot ?? []);
 const dueIds = () => new Set(S?.warm?.[preset().id]?.overdue ?? []);
 const asleep = (n: WNode) => !!preset().asleep?.includes(n.id);
+/** Files frozen for the selected thread: it read or edited them earlier, but not lately. */
+const frozenIds = () => new Set(S?.map.settings.freeze ? S.threads.find((t) => t.id === selThread)?.frozen ?? [] : []);
 /** Highlights the overdue files on the map, like a search. */
 let showDue = false;
 /** Embers rising off a hot node. Fixed offsets, so a redraw never makes them jump. */
@@ -164,7 +168,7 @@ function draw() {
     gC.append(hit, path);
     cords[p + ">" + c] = path;
   }
-  const warm = warmIds(), hot = hotIds(), due = dueIds();
+  const warm = warmIds(), hot = hotIds(), due = dueIds(), frost = frozenIds();
   if (showDue && !due.size) showDue = false;
   world.classList.toggle("show-due", showDue);
   for (const n of N) {
@@ -179,6 +183,7 @@ function draw() {
     d.classList.toggle("cold", coldIn(n, warm));
     d.classList.toggle("due", due.has(n.id));
     d.classList.toggle("asleep", asleep(n));
+    d.classList.toggle("frozen", frost.has(n.id));
     const burning = hot.has(n.id), embers = d.querySelector(".embers");
     d.classList.toggle("hot", burning);
     if (burning && !embers) d.insertAdjacentHTML("beforeend", EMBERS);
@@ -315,6 +320,7 @@ function inspect() {
     ${tok ? `<dt>Tokens</dt><dd>~${fmt(tok)}${n.exact ? " (exact)" : " (estimate)"}</dd>` : ""}
     ${parents ? `<dt>Used by</dt><dd>${esc(parents)}</dd>` : ""}${kids ? `<dt>Elements</dt><dd>${kids}</dd>` : ""}
     <dt>State</dt><dd>${live ? `Attached in ${esc(preset().name)}` : "Detached"}</dd>
+    ${frozenIds().has(n.id) ? `<dt>Frozen</dt><dd><span class="heat frozen">For ${esc(threadLabel(S.threads.find((t) => t.id === selThread)!))}</span></dd>` : ""}
     ${heatTxt ? `<dt>Heat</dt><dd><span class="heat ${heatTxt.split(" ")[0].toLowerCase()}">${esc(heatTxt)}</span></dd>` : ""}</dl>
     <div class="actions">${canToggle ? `<button class="btn" id="tg">${live ? "Detach" : "Reattach"}</button>` : ""}${renaming ? "" : '<button class="btn" id="rn">Rename</button>'}</div>
     ${n.kind === "design" ? `<span class="cap">New feature from this design</span>
@@ -397,11 +403,15 @@ let editing: "copy" | "rename" | null = null;
 function threadRow(t: Thread, p: Preset): HTMLLIElement {
   const li = document.createElement("li");
   const verb = threadVerb(t.id), name = threadLabel(t);
-  li.className = "thread" + (verb ? " busy" : working(t.id) ? " live" : "");
+  const ctx = t.context?.level ?? "ok", frost = S!.map.settings.freeze ? t.frozen?.length ?? 0 : 0;
+  li.className = "thread" + (verb ? " busy" : working(t.id) ? " live" : "") + (ctx !== "ok" ? ` ctx-${ctx}` : "") + (t.id === selThread ? " sel" : "");
   li.style.setProperty("--c", p.color);
   li.innerHTML = `<span class="ticon"><canvas class="orb" width="32" height="32" data-session="${esc(t.id)}" aria-hidden="true"></canvas><i></i></span>`
-    + `<span class="tmain"><b title="${esc(name)}">${esc(name)}</b><small>${verb ? VERB_ING[verb] : working(t.id) ? "Working" : "Idle"}${t.contextTokens ? ` · ${fmt(t.contextTokens)} in context` : ""}</small></span>`
+    + `<button class="tmain" aria-pressed="${t.id === selThread}" title="${t.id === selThread ? "Stop showing this thread's frozen files" : "Show this thread's frozen files on the map"}"><b title="${esc(name)}">${esc(name)}</b>`
+    + `<small>${verb ? VERB_ING[verb] : working(t.id) ? "Working" : "Idle"}${t.contextTokens ? ` · ${fmt(t.contextTokens)} in context` : ""}${frost ? ` · ${frost} frozen` : ""}</small>`
+    + `${t.context?.text ? `<small class="cwarn">${esc(t.context.text)}</small>` : ""}</button>`
     + `<select aria-label="Preset for ${esc(name)}" title="Move this thread to another preset">${S!.map.presets.map((x) => `<option value="${esc(x.id)}" ${x.id === t.preset ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select>`;
+  li.querySelector(".tmain")!.addEventListener("click", () => { selThread = selThread === t.id ? null : t.id; store.set("weave.thread", selThread ?? ""); renderAll(); });
   li.querySelector("select")!.addEventListener("change", (e) => api("/api/assign", { thread: t.id, preset: (e.target as HTMLSelectElement).value }).catch((err) => toast(err.message)));
   return li;
 }
@@ -479,6 +489,17 @@ function renderPresetActions() {
   row.querySelector("#pdel")?.addEventListener("click", () => {
     if (confirm(`Delete the preset "${p.name}"? Threads on it go back to ${S!.map.presets.find(isBase)?.name ?? "the default view"}.`)) api("/api/presets/delete", { id: p.id }).catch((e) => toast(e.message));
   });
+}
+
+/** Shown on the map while a thread is selected: whose frozen files are frosted. */
+function renderFrost() {
+  const el = $("frost"), t = S?.threads.find((x) => x.id === selThread);
+  el.hidden = !t || !S!.map.settings.freeze;
+  if (el.hidden) return;
+  const n = frozenIds().size;
+  el.innerHTML = `<i></i><span>${n ? `<b>${n}</b> frozen for` : "Nothing frozen for"} <b>${esc(threadLabel(t!))}</b></span><button aria-label="Stop showing frozen files" title="Stop showing frozen files">×</button>`;
+  el.title = "Files this thread read or edited earlier, but not in its last 10 minutes or its last 2 messages. Fixed rules, no AI. Nothing is blocked; a file unfreezes when the thread uses it again.";
+  el.querySelector("button")!.onclick = () => { selThread = null; store.set("weave.thread", ""); renderAll(); };
 }
 
 /** Shown on the map while a saved preset is selected, since clicking a cord edits it. */
@@ -593,6 +614,14 @@ function renderSettings() {
   $("auto").onclick = () => api("/api/settings", { autoApply: !st.autoApply }).catch((e) => toast(e.message));
   $("warmCold").setAttribute("aria-checked", String(st.warmCold));
   $("warmCold").onclick = () => api("/api/settings", { warmCold: !st.warmCold }).catch((e) => toast(e.message));
+  $("freeze").setAttribute("aria-checked", String(st.freeze));
+  $("freeze").onclick = () => api("/api/settings", { freeze: !st.freeze }).catch((e) => toast(e.message));
+  for (const k of ["heavyAt", "freshAt"] as const) {
+    const input = $<HTMLInputElement>(k);
+    // A live update must not overwrite a number being typed.
+    if (document.activeElement !== input) input.value = String(Math.round(st[k] / 1000));
+    input.onchange = () => api("/api/settings", { [k]: Number(input.value) * 1000 }).catch((e) => toast(e.message));
+  }
   seg("gate", st.gate, (v) => api("/api/settings", { gate: v }).catch((e) => toast(e.message)));
   const t = S.tokens;
   $("tokNote").textContent = t.mode === "exact"
@@ -889,6 +918,7 @@ function renderAll() {
   inspect();
   renderPresets();
   renderEditing();
+  renderFrost();
   renderSuggestions();
   renderSettings();
 }

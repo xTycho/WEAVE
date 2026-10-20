@@ -8,6 +8,7 @@ import {
   ContextStore, scanProject, listenWithFallback, attach, detach, isLive, getPreset, findNode, nodeForPath,
   windowNote, spinUp, handleHook, suggestions, recentEvents, heat, warmth, HALF_LIFE, saveKey,
   overdue, OVERDUE_DAYS, sleep, presetFromHeat, tagFor, threadName, readKey, removeKey, tokenMode, startDashboard,
+  frozen, frozenLine, FREEZE_AFTER, FROZEN_CHARS, contextLevel, thresholds, normalizeMap, appendEvent, readThreads,
 } from "../dist/index.js";
 import { createTools } from "../dist/mcp/tools.js";
 
@@ -240,6 +241,97 @@ test("overdue files can be put to sleep and wake when Claude uses them", () => {
   const pre = handleHook({ ...input, hook_event_name: "PreToolUse" }, root);
   assert.ok(!pre.stdout, "a sleeping file is never blocked, even in Block mode");
   assert.ok(isLive(findNode(store.load().map, "src/ui/App.tsx"), getPreset(store.load().map)), "and it wakes the moment Claude reads it");
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("files a thread moved on from freeze for that thread only", () => {
+  const root = project();
+  const { map } = new ContextStore(root).load();
+  const now = Date.now(), min = 60_000;
+  const ev = (node, ago, s = "t1", verb = "Read") => ({ t: now - ago, s, ph: "end", verb, node, tool: "x" });
+  const events = [ev("src/ui/App.tsx", 30 * min), ev("src/api/server.ts", 30 * min, "t2"), ev("src/lib/format.ts", 25 * min, "t1", "Edit"), ev("docs/guide.md", 5 * min), ev("tool:test", 40 * min, "t1", "Run")];
+  const ids = (prompts) => frozen(map, events, "t1", prompts, now).map((n) => n.id);
+  assert.deepEqual(ids([now]), [], "a thread on its first message has nothing frozen");
+  assert.deepEqual(ids([now - 40 * min, now - 20 * min, now]), ["src/lib/format.ts", "src/ui/App.tsx"], "used before its last two messages and over 10 minutes ago");
+  assert.deepEqual(ids([now - 40 * min, now - 35 * min, now]), [], "still within its last two messages");
+  assert.deepEqual(ids([now - 4 * min, now - 2 * min, now]), ["src/lib/format.ts", "src/ui/App.tsx"]);
+  assert.ok(!ids([now - 40 * min, now - 20 * min, now]).includes("docs/guide.md"), "used in the last 10 minutes");
+  assert.ok(FREEZE_AFTER === 10 * min);
+  assert.deepEqual(frozen(map, events, "t2", [now - 40 * min, now - 20 * min, now], now).map((n) => n.id), ["src/api/server.ts"], "per thread");
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("the frozen line groups by folder and stays short", () => {
+  assert.equal(frozenLine([]), undefined);
+  assert.equal(frozenLine(["src/a.ts", "src/b.ts", "README.md", "lib/x/"]), "Frozen, skip unless needed: src/{a.ts, b.ts}, README.md, lib/x/.");
+  assert.equal(frozenLine(["src/a.ts", "src/b.ts", "src/c.ts", "src/d.ts"]), "Frozen, skip unless needed: src/ (4 files).");
+  const many = Array.from({ length: 40 }, (_, i) => `folder${i}/some/deeper/path/file${i}.ts`);
+  const line = frozenLine(many);
+  assert.ok(line.length <= FROZEN_CHARS, `${line.length} characters`);
+  assert.match(line, /and \d+ more\.$/);
+});
+
+test("each message tells the thread what is frozen, and a file unfreezes when used", () => {
+  const root = project();
+  const store = new ContextStore(root);
+  store.save(store.load().map);
+  const before = JSON.stringify(store.load().map.presets);
+  const now = Date.now(), min = 60_000;
+  appendEvent(store.paths, { t: now - 30 * min, s: "t1", ph: "end", verb: "Read", node: "src/ui/App.tsx", tool: "Read", path: "src/ui/App.tsx" });
+  writeFileSync(store.paths.threads, JSON.stringify({ t1: { id: "t1", name: "x", startedAt: now - 40 * min, lastSeen: now, prompts: [now - 40 * min, now - 20 * min] } }));
+  const prompt = () => handleHook({ hook_event_name: "UserPromptSubmit", session_id: "t1", prompt: "next" }, root).stdout;
+  const first = JSON.parse(prompt()).hookSpecificOutput;
+  assert.equal(first.hookEventName, "UserPromptSubmit");
+  assert.equal(first.additionalContext, "Frozen, skip unless needed: src/ui/App.tsx.");
+  assert.equal(readThreads(store.paths).t1.prompts.length, 3, "prompt times are kept per thread");
+  assert.equal(handleHook({ hook_event_name: "UserPromptSubmit", session_id: "t9", prompt: "hi" }, root).stdout, undefined, "other threads are not touched");
+
+  const read = { session_id: "t1", tool_name: "Read", tool_input: { file_path: join(root, "src/ui/App.tsx") } };
+  assert.equal(handleHook({ ...read, hook_event_name: "PreToolUse" }, root).stdout, undefined, "a frozen file is never blocked");
+  handleHook({ ...read, hook_event_name: "PostToolUse" }, root);
+  assert.equal(prompt(), undefined, "reading it unfreezes it");
+  assert.equal(JSON.stringify(store.load().map.presets), before, "presets are never edited");
+
+  appendEvent(store.paths, { t: now - 30 * min, s: "t1", ph: "end", verb: "Edit", node: "src/lib/format.ts", tool: "Edit" });
+  store.update((m) => { m.settings.freeze = false; });
+  assert.equal(prompt(), undefined, "the switch turns it off");
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("context warnings follow fixed, adjustable thresholds", () => {
+  const st = { heavyAt: 150_000, freshAt: 300_000 };
+  assert.deepEqual(contextLevel(undefined, st), { level: "ok" });
+  assert.deepEqual(contextLevel(149_999, st), { level: "ok" });
+  assert.deepEqual(contextLevel(150_000, st), { level: "heavy", text: "This thread is getting heavy, run /compact" });
+  assert.deepEqual(contextLevel(300_000, st), { level: "full", text: "Start a fresh thread for the next task" });
+  assert.equal(contextLevel(90_000, { heavyAt: 80_000, freshAt: 100_000 }).level, "heavy");
+  assert.deepEqual(thresholds(500_000, 200_000), { heavyAt: 500_000, freshAt: 500_000 }, "red never comes before amber");
+  assert.deepEqual(thresholds(1, 9e9), { heavyAt: 10_000, freshAt: 2_000_000 });
+  const { settings } = normalizeMap({});
+  assert.deepEqual([settings.freeze, settings.heavyAt, settings.freshAt], [true, 150_000, 300_000], "freezing is on by default");
+});
+
+test("the map server reports each thread's context level and frozen files", async () => {
+  const root = project();
+  const store = new ContextStore(root);
+  const now = Date.now(), min = 60_000;
+  const transcript = join(root, "t1.jsonl");
+  writeFileSync(transcript, JSON.stringify({ message: { usage: { input_tokens: 10, cache_read_input_tokens: 160_000, output_tokens: 5 } } }) + "\n");
+  mkdirSync(store.paths.weaveDir, { recursive: true });
+  appendEvent(store.paths, { t: now - 30 * min, s: "t1", ph: "end", verb: "Read", node: "src/ui/App.tsx", tool: "Read" });
+  writeFileSync(store.paths.threads, JSON.stringify({ t1: { id: "t1", name: "x", startedAt: now - 40 * min, lastSeen: now, transcript, prompts: [now - 40 * min, now - 20 * min, now] } }));
+  const d = await startDashboard({ root, port: 3700, watch: false });
+  const state = () => fetch(`${d.url}/api/state`).then((r) => r.json());
+  const post = (body) => fetch(`${d.url}/api/settings`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  let t = (await state()).threads[0];
+  assert.equal(t.context.level, "heavy");
+  assert.deepEqual(t.frozen, ["src/ui/App.tsx"]);
+  await post({ freshAt: 150_000 });
+  t = (await state()).threads[0];
+  assert.equal(t.context.level, "full", "the thresholds are adjustable");
+  await post({ freeze: false });
+  assert.deepEqual((await state()).threads[0].frozen, []);
+  await d.close();
   rmSync(root, { recursive: true, force: true });
 });
 

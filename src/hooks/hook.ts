@@ -1,4 +1,5 @@
 import { appendEvent, readThreads, recentEvents, writeThread } from "../engine/activity.js";
+import { frozen, frozenLine, KEEP_PROMPTS } from "../engine/freeze.js";
 import { warmth } from "../engine/heat.js";
 import { suggestions } from "../engine/rules.js";
 import { attach, isLive, nodeForPath, presetFor, wake, windowNote } from "../engine/window.js";
@@ -9,8 +10,8 @@ import type { ActivityEvent, ContextMap, Verb, WeaveNode } from "../types.js";
 /**
  * Claude Code hook handler: `weave hook` reads one hook payload on stdin.
  * Plain code, no model: it logs what a thread does so the map can show it,
- * gates detached files when the user chose Block, and tells a new thread
- * which context window it runs on.
+ * gates detached files when the user chose Block, tells a new thread which
+ * context window it runs on, and tells it per message which files are frozen.
  */
 
 export interface HookInput {
@@ -87,9 +88,11 @@ export function handleHook(input: HookInput, root = input.cwd ?? process.cwd()):
   }
   if (event === "UserPromptSubmit") {
     const name = threadName(input.prompt ?? "");
-    const named = readThreads(store.paths)[session]?.named;
-    writeThread(store.paths, session, { transcript: input.transcript_path, ...(name && !named ? { name, named: true } : {}) });
-    return { exitCode: 0 };
+    const prev = readThreads(store.paths)[session];
+    const prompts = [...(prev?.prompts ?? []), Date.now()].slice(-KEEP_PROMPTS);
+    writeThread(store.paths, session, { transcript: input.transcript_path, prompts, ...(name && !prev?.named ? { name, named: true } : {}) });
+    const line = map.settings.freeze ? frozenLine(frozen(map, recentEvents(store.paths), session, prompts).map((n) => n.paths[0] ?? n.id)) : undefined;
+    return line ? json({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: line } }) : { exitCode: 0 };
   }
   if (event !== "PreToolUse" && event !== "PostToolUse") return { exitCode: 0 };
 
