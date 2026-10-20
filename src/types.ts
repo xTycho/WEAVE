@@ -32,6 +32,8 @@ export interface Settings {
   compactAt: number;
   /** Tell threads when to /compact, /clear or hand work to an area's subagent. */
   meter: boolean;
+  /** "command" suggests /compact and /clear; "thread" suggests a new thread instead, for where slash commands cannot be typed. */
+  fresh: "command" | "thread";
 }
 
 export interface ContextMap {

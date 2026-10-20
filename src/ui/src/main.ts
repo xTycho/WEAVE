@@ -11,7 +11,7 @@ interface WNode { id: string; label: string; tier: Tier; kind: Kind; paths: stri
 interface Area { id: string; name: string; agent: string; features: string[]; folders: string[]; files: string[]; tokens: number; threads: number; from: "usage" | "folders"; hasAgent: boolean }
 interface Meter { level: Level; tokens?: number; window: number; share: number; stale: number; text?: string; agent?: string }
 interface Thread { id: string; name: string; startedAt: number; lastSeen: number; contextTokens?: number; meter: Meter }
-interface Settings { window: number; compactAt: number; meter: boolean }
+interface Settings { window: number; compactAt: number; meter: boolean; fresh: "command" | "thread" }
 interface State {
   project: string;
   map: { nodes: WNode[]; settings: Settings };
@@ -350,6 +350,9 @@ function threadRow(t: Thread): HTMLLIElement {
 
 function renderThreads() {
   if (!S) return;
+  const fresh = S.map.settings.fresh === "thread";
+  LEVEL.compact = fresh ? "New thread" : "/compact";
+  LEVEL.clear = fresh ? "New thread" : "/clear";
   if (naming && document.activeElement?.closest?.("#tlist .tname")) return;
   const box = $("tlist");
   box.innerHTML = "";
@@ -433,6 +436,10 @@ function renderSettings() {
   document.querySelectorAll<HTMLButtonElement>("#window button").forEach((b) => {
     b.setAttribute("aria-pressed", String(Number(b.dataset.v) === st.window));
     b.onclick = () => api("/api/settings", { window: Number(b.dataset.v) }).catch((e) => toast(e.message));
+  });
+  document.querySelectorAll<HTMLButtonElement>("#fresh button").forEach((b) => {
+    b.setAttribute("aria-pressed", String(b.dataset.v === st.fresh));
+    b.onclick = () => api("/api/settings", { fresh: b.dataset.v }).catch((e) => toast(e.message));
   });
   const input = $<HTMLInputElement>("compactAt");
   // A live update must not overwrite a number being typed.

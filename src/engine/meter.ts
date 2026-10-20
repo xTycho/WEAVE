@@ -6,7 +6,9 @@ import { featureOf, k, nodeIndex } from "./map.js";
 /**
  * The meter. Fixed rules over a thread's token count (from its transcript)
  * and the activity log, no model involved. A thread hears at most one line
- * per user message, and only the user can run /compact or /clear.
+ * per user message, and only the user can run /compact or /clear. With
+ * `fresh` set to "thread" (for the app, where they cannot be typed), both
+ * become "start a new thread" with a carry-over line.
  *
  *  - Compact: from COMPACT_NOW of the window, or from `compactAt` when at least
  *    STALE_SHARE of the thread is files it has moved on from. A file has been
@@ -60,11 +62,12 @@ function split(map: ContextMap, events: ActivityEvent[], session: string, start:
 }
 
 /** A fixed-rule carry-over line for a /clear: the earlier task, the files it edited, and uncommitted changes. */
-export function carryOver(map: ContextMap, events: ActivityEvent[], thread: ThreadInfo, root?: string): string {
-  const start = thread.prompts?.at(-1) ?? Date.now();
+export function carryOver(map: ContextMap, events: ActivityEvent[], thread: ThreadInfo, root?: string, all = false): string {
+  // For /clear the carry-over is the work before this message; for a new thread it is everything so far.
+  const start = all ? Infinity : thread.prompts?.at(-1) ?? Date.now();
   const edited = [...new Set(own(events, thread.id).filter((e) => e.verb === "Edit" && e.t < start).map((e) => e.path ?? e.node))];
-  const ask = thread.asks && thread.asks.length > 1 ? thread.asks[thread.asks.length - 2] : undefined;
-  const parts = [ask ? `earlier task "${ask}"` : undefined, edited.length ? `edited ${edited.slice(0, 5).join(", ")}${edited.length > 5 ? ` and ${edited.length - 5} more` : ""}` : undefined];
+  const ask = all ? thread.asks?.at(-1) : thread.asks && thread.asks.length > 1 ? thread.asks[thread.asks.length - 2] : undefined;
+  const parts = [ask ? `${all ? "task" : "earlier task"} "${ask}"` : undefined, edited.length ? `edited ${edited.slice(0, 5).join(", ")}${edited.length > 5 ? ` and ${edited.length - 5} more` : ""}` : undefined];
   const dirty = root ? uncommitted(root) : undefined;
   if (dirty) parts.push(`${dirty} uncommitted file${dirty === 1 ? "" : "s"}`);
   const text = parts.filter(Boolean).join("; ");
@@ -93,7 +96,9 @@ export interface MeterInput {
 
 /** The meter for one thread right now. */
 export function meter({ map, events, thread, tokens, agents, at, root }: MeterInput): Meter {
-  const { window, compactAt } = map.settings;
+  const { window, compactAt, fresh } = map.settings;
+  // Where /compact and /clear cannot be typed (the app, a project thread), the advice is a new thread with a carry-over line.
+  const thread_ = fresh === "thread";
   const share = tokens ? tokens / window : 0;
   const stale = staleTokens(map, events, thread.id, thread.prompts);
   const base: Meter = { level: "ok", tokens, window, share, stale };
@@ -103,7 +108,9 @@ export function meter({ map, events, thread, tokens, agents, at, root }: MeterIn
   const compact = share >= COMPACT_NOW || (share >= compactAt && stale >= STALE_SHARE * tokens);
   if (compact && at !== "tool") {
     const why = share >= COMPACT_NOW ? "nearly full" : `~${k(stale)} of it is files it has moved on from`;
-    return { ...base, level: "compact", text: `This thread holds ${full} and ${why}. Run /compact.` };
+    if (!thread_) return { ...base, level: "compact", text: `This thread holds ${full} and ${why}. Run /compact.` };
+    const carry = carryOver(map, events, thread, root, true);
+    return { ...base, level: "compact", text: `This thread holds ${full} and ${why}. Start a new thread for the next task.${carry ? ` ${carry}` : ""}` };
   }
   if (at === "prompt") return base;
 
@@ -112,7 +119,7 @@ export function meter({ map, events, thread, tokens, agents, at, root }: MeterIn
   if (share >= CLEAR_MIN && before.size >= 2 && now.size >= 2 && actions <= CLEAR_LOOK && [...featNow].every((f) => !featBefore.has(f))) {
     const where = [...featNow].map((f) => nodes.get(f)?.paths[0] ?? f).join(", ");
     const carry = carryOver(map, events, thread, root);
-    return { ...base, level: "clear", text: `This message works in ${where}, which nothing earlier in this thread touched, and the thread holds ${full}. Run /clear and send the request again.${carry ? ` ${carry}` : ""}` };
+    return { ...base, level: "clear", text: `This message works in ${where}, which nothing earlier in this thread touched, and the thread holds ${full}. ${thread_ ? "Start a new thread for this request." : "Run /clear and send the request again."}${carry ? ` ${carry}` : ""}` };
   }
   if (share >= DELEGATE_AT && now.size) {
     const hit = new Set([...now].map((id) => areaOf(agents, nodes.get(id))));
@@ -126,5 +133,5 @@ export function meter({ map, events, thread, tokens, agents, at, root }: MeterIn
 export function meterLine(m: Meter): string | undefined {
   if (m.level === "ok" || !m.text) return undefined;
   if (m.level === "delegate") return `WEAVE: ${m.text}`;
-  return `WEAVE: ${m.text} Only the user can run it, so tell them in one line.`;
+  return `WEAVE: ${m.text} Only the user can do this, so tell them in one line.`;
 }

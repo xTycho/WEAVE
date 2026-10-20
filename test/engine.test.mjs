@@ -81,7 +81,7 @@ test("a broken map is kept as a backup before it is rebuilt, and old maps keep t
   assert.equal(old.version, 3);
   assert.equal(old.nodes.length, 1);
   assert.equal("presets" in old, false);
-  assert.deepEqual(old.settings, { window: 50_000, compactAt: 0.6, meter: true }, "settings are clamped to safe values");
+  assert.deepEqual(old.settings, { window: 50_000, compactAt: 0.6, meter: true, fresh: "command" }, "settings are clamped to safe values");
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -144,7 +144,9 @@ test("the meter says /compact when the thread is nearly full or mostly stale", (
   assert.equal(meter({ ...base, events: [], thread, tokens: 100_000 }).level, "ok");
   const full = meter({ ...base, events: [], thread, tokens: 170_000 });
   assert.equal(full.level, "compact");
-  assert.match(meterLine(full), /Run \/compact\. Only the user can run it/);
+  assert.match(meterLine(full), /Run \/compact\. Only the user can do this/);
+  const app = meter({ ...base, map: { ...map, settings: { ...map.settings, fresh: "thread" } }, events: [ev(now - MIN, "t1", "src/ui/App.tsx", "Edit")], thread: { ...thread, asks: ["Restyle the ui"] }, tokens: 170_000 });
+  assert.match(app.text, /Start a new thread for the next task\. Carry-over: task "Restyle the ui"; edited src\/ui\/App\.tsx\./, "where /compact cannot be typed, the advice is a new thread");
   const events = [ev(now - 40 * MIN, "t1", "src/api/big.ts"), ev(now - MIN, "t1", "src/ui/App.tsx")];
   assert.equal(staleTokens(map, events, "t1", thread.prompts), 40_000);
   assert.equal(meter({ ...base, events, thread, tokens: 130_000 }).level, "compact", "past compactAt with a quarter stale");
