@@ -288,3 +288,29 @@ test("port allocation falls back to the next free port", async () => {
   assert.ok(got > base);
   await Promise.all([new Promise((r) => blocker.close(r)), new Promise((r) => next.close(r))]);
 });
+
+test("the map opens a terminal running Claude Code and tracks it under the id it launched with", async () => {
+  const root = project();
+  const calls = [];
+  const spawn = (command, args, options) => { calls.push({ command, args, options }); return { unref() {}, on() {} }; };
+  const d = await startDashboard({ root, port: 3750, watch: false, spawn });
+  const post = (body) => fetch(`${d.url}/api/terminal`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((r) => r.json());
+  if (process.platform !== "win32") {
+    assert.match((await post({})).error, /Windows only/);
+  } else {
+    const first = await post({});
+    assert.equal(first.result, "Thread 1");
+    const [id] = Object.keys(readThreads(new ContextStore(root).paths));
+    const line = calls[0].args.join(" ");
+    assert.ok(line.includes(`claude --session-id ${id} --name "Thread 1"`), "launched under the id the map tracks");
+    assert.equal(calls[0].options.cwd, root);
+    const named = await post({ name: 'Fix "login" & `more` | now' });
+    assert.equal(named.result, "Fix login more now", "the name can't carry shell characters");
+    assert.equal(readThreads(new ContextStore(root).paths)[id].launched, true);
+    assert.equal((await post({ resume: "not-a-thread" })).ok, false);
+    assert.equal((await post({ resume: id })).ok, true);
+    assert.ok(calls.at(-1).args.join(" ").includes(`claude --resume ${id}`));
+  }
+  await d.close();
+  rmSync(root, { recursive: true, force: true });
+});

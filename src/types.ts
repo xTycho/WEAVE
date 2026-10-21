@@ -97,6 +97,8 @@ export interface ThreadInfo {
   n?: number;
   /** Named by a title tool or by the user in the map. */
   named?: boolean;
+  /** Opened from the map's terminal button, so WEAVE chose its id and name. */
+  launched?: boolean;
   startedAt: number;
   lastSeen: number;
   transcript?: string;

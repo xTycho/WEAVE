@@ -8,6 +8,7 @@ import { projectName, writeAgents } from "../engine/agents.js";
 import { agentAreas, areas } from "../engine/areas.js";
 import { WeaveError } from "../engine/map.js";
 import { meter } from "../engine/meter.js";
+import { openTerminal, terminalLaunch, type Spawner } from "../engine/terminal.js";
 import { ContextStore, settingsFrom } from "../store.js";
 import type { ActivityEvent, Area, ContextMap, Meter, ThreadInfo } from "../types.js";
 import { watchFiles, watchProject, type Watcher } from "../watch.js";
@@ -18,7 +19,7 @@ const MIME: Record<string, string> = {
   ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon", ".json": "application/json", ".woff2": "font/woff2",
 };
 
-export interface DashboardOptions { root?: string; port?: number; host?: string; maxPortAttempts?: number; watch?: boolean }
+export interface DashboardOptions { root?: string; port?: number; host?: string; maxPortAttempts?: number; watch?: boolean; spawn?: Spawner }
 export interface Dashboard { url: string; port: number; close(): Promise<void> }
 
 /** Listens on `port`, walking upward (3000 -> 3001 -> ...) while ports are taken. */
@@ -114,7 +115,7 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
   const pushState = () => broadcast(state());
   const agentsNow = () => { const { map } = store.load(); return writeAgents(store.root, projectName(map), areas(map, events)); };
 
-  const routes: Record<string, (b: Record<string, unknown>) => unknown> = {
+  const routes: Record<string, (b: Record<string, unknown>) => unknown | Promise<unknown>> = {
     "/api/settings": (b) => { store.update((m) => { m.settings = settingsFrom({ ...m.settings, ...b }); }); pushState(); return true; },
     "/api/agents": () => { const r = agentsNow(); pushState(); return r; },
     "/api/threads/rename": (b) => {
@@ -132,6 +133,17 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
       const n = removeThreads(store.paths, ids);
       pushState();
       return n;
+    },
+    // Opens a console window running Claude Code. The thread is made first, under the id the window will use, so the map names it by how it was launched.
+    "/api/terminal": async (b) => {
+      const resume = s(b.resume), old = resume ? readThreads(store.paths)[resume] : undefined;
+      if (resume && !old) throw new WeaveError("Unknown thread.");
+      const n = Math.max(0, ...Object.values(readThreads(store.paths)).map((x) => x.n ?? 0)) + 1;
+      const launch = terminalLaunch({ name: s(b.name) ?? old?.name, fallback: `Thread ${n}`, resume });
+      await openTerminal(launch, store.root, opts.spawn);
+      if (!old) writeThread(store.paths, launch.id, { name: launch.name, named: s(b.name) !== undefined, launched: true });
+      pushState();
+      return launch.name;
     },
     "/api/rescan": () => { store.rescan(); agentsNow(); pushState(); return true; },
   };
@@ -153,7 +165,7 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
       if (route) {
         if (req.method !== "POST" || !(req.headers["content-type"] ?? "").includes("application/json")) return send(res, 405, { error: "POST JSON only" });
         try {
-          return send(res, 200, { ok: true, result: route(await readBody(req)) });
+          return send(res, 200, { ok: true, result: await route(await readBody(req)) });
         } catch (err) {
           return send(res, err instanceof WeaveError ? 400 : 500, { ok: false, error: (err as Error).message });
         }

@@ -226,8 +226,8 @@ header::before { content: ""; position: absolute; inset: 0 0 auto; height: 3px; 
 .ibtn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 /* The native select sits invisibly over the chevron, so the menu is the system's own. */
 .ibtn.move select { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
-.ibtn.end { opacity: 0; }
-.thread:hover .ibtn.end, .ibtn.end:focus-visible { opacity: 1; }
+.ibtn.end, .ibtn.term { opacity: 0; }
+.thread:hover .ibtn.end, .thread:hover .ibtn.term, .ibtn.end:focus-visible, .ibtn.term:focus-visible { opacity: 1; }
 .plist > li.older { padding: 2px 10px; display: flex; gap: 14px; }
 .older button { border: 0; background: none; padding: 4px 0; color: var(--dim); font: 400 12px var(--body); cursor: pointer; }
 .older button:hover { color: var(--fg); text-decoration: underline; }

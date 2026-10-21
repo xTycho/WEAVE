@@ -14,6 +14,7 @@ export { agentText, writeAgents, mapNote, projectName, agentsDir, MARK } from ".
 export { meter, meterLine, staleTokens, carryOver, COMPACT_NOW, STALE_SHARE, CLEAR_MIN, CLEAR_LOOK, DELEGATE_AT, KEEP } from "./engine/meter.js";
 export { WeaveError, nodeForPath, nodeIndex, featureOf } from "./engine/map.js";
 export { appendEvent, recentEvents, readThreads, writeThread, removeThreads, transcriptTokens } from "./engine/activity.js";
+export { terminalLaunch, openTerminal, terminalName } from "./engine/terminal.js";
 export { projectPaths, toRelative } from "./paths.js";
 export { debounce, watchFiles, watchProject } from "./watch.js";
 export type * from "./types.js";

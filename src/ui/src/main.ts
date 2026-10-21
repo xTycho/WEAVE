@@ -297,6 +297,7 @@ function renderAreas() {
   if (!S.areas.length) box.innerHTML = '<li class="empty">No areas yet. Run `weave scan` in the project folder.</li>';
 }
 
+const ICON_TERM = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 5 3 3-3 3M8 11.5h4.5"/></svg>';
 const ICON_END = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"/></svg>';
 /** Threads seen in the last day get a row; older ones fold under "older". */
 const RECENT = 864e5;
@@ -323,6 +324,7 @@ function threadRow(t: Thread): HTMLLIElement {
     + `<span class="tbar" title="${esc(size)}"><i></i><small>${tok ? fmt(tok).replace(/\.\dk$/, "k") : ""}</small></span>`
     + (LEVEL[m.level] ? `<span class="advice" title="${esc(m.text ?? "")}">${esc(LEVEL[m.level])}</span>` : "<span hidden></span>")
     + (isActive(t) ? `<span class="active" title="Used in the last ${ACTIVE / MIN} minutes">Active</span>` : "<span hidden></span>")
+    + `<button class="ibtn term" title="Reopen this thread in a terminal window" aria-label="Open ${esc(name)} in a terminal">${ICON_TERM}</button>`
     + `<button class="ibtn end" title="End thread: clear it from the map. Areas keep what it taught them." aria-label="End thread ${esc(name)}">${ICON_END}</button>`;
   const main = li.querySelector<HTMLButtonElement>(".tmain")!;
   main.addEventListener("dblclick", () => {
@@ -341,6 +343,9 @@ function threadRow(t: Thread): HTMLLIElement {
     };
     input.addEventListener("keydown", (e) => { if (e.key === "Enter") end(true); if (e.key === "Escape") end(false); });
     input.addEventListener("blur", () => end(true));
+  });
+  li.querySelector(".ibtn.term")!.addEventListener("click", () => {
+    api("/api/terminal", { resume: t.id }).then(() => toast("Terminal opened.")).catch((e) => toast(e.message));
   });
   li.querySelector(".ibtn.end")!.addEventListener("click", () => {
     api("/api/threads/end", { thread: t.id }).then(() => toast("Thread cleared. Areas keep what it taught them.")).catch((e) => toast(e.message));
@@ -372,6 +377,7 @@ function renderThreads() {
 }
 
 $("agents").onclick = () => api("/api/agents").then((r) => toast(`Subagents: ${r.written.length} written, ${r.removed.length} removed.`)).catch((e) => toast(e.message));
+$("newterm").onclick = () => api("/api/terminal", {}).then((name) => toast(`Opened a terminal for ${name}.`)).catch((e) => toast(e.message));
 $("rescan").onclick = () => api("/api/rescan").then(() => toast("Rescanned the project.")).catch((e) => toast(e.message));
 
 // ---------- Search ----------
