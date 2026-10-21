@@ -22,7 +22,10 @@ interface State {
   areas: Area[];
   threads: Thread[];
   chat: { id: string; name: string; exited?: number } | null;
+  usage?: Usage;
 }
+interface Tokens { input: number; output: number; cacheCreate: number; cacheRead: number }
+interface Usage { at: number; session?: Tokens; block: { active: boolean; start?: number; resets?: number; tokens: Tokens }; week: Tokens; files: number }
 interface Activity { t: number; s: string; ph?: "start" | "end"; verb: Verb; node: string; path?: string; sub?: boolean }
 type Node = WNode & Placed;
 
@@ -46,6 +49,26 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getEleme
 const NS = "http://www.w3.org/2000/svg";
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 const fmt = (v: number) => (v >= 1000 ? (v / 1000).toFixed(v >= 100_000 ? 0 : 1) + "k" : String(v));
+/** Large token counts, short: 950k, 1.2M, 41M. */
+const big = (v: number) => (v >= 1e6 ? (v / 1e6).toFixed(v >= 1e7 ? 0 : 1) + "M" : fmt(Math.round(v)));
+const allTok = (t: Tokens) => t.input + t.output + t.cacheCreate + t.cacheRead;
+const hhmm = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+/** The chat header's usage readout and its tooltip: token totals only, never a percentage, since no plan limit is readable locally. */
+function usageText(u: Usage | undefined): { text: string; tip: string } {
+  if (!u) return { text: "", tip: "" };
+  const b = u.block, io = (t: Tokens) => `${big(t.input + t.output)} (in ${big(t.input)}, out ${big(t.output)})`;
+  const five = b.active ? `5h ${big(allTok(b.tokens))} (resets ${hhmm(b.resets!)})` : "5h 0 (next window starts with your next message)";
+  const text = [u.session ? `This chat ${big(allTok(u.session))}` : "", five, `Week ${big(allTok(u.week))}`].filter(Boolean).join(" · ");
+  const tip = [
+    "Counts only this PC's Claude Code transcripts (~/.claude/projects, every project and subagent). Not claude.ai web or app, and not cloud sessions.",
+    "Totals are input + output + cache writes + cache reads, so cache reads make them large. Plan limits are not readable locally, so no percentage is shown.",
+    u.session ? `This chat (its transcript and subagents): ${big(allTok(u.session))}. Input/output only: ${io(u.session)}.` : "",
+    b.active ? `5-hour block ${hhmm(b.start!)}-${hhmm(b.resets!)} (starts at the first message, floored to the hour): ${big(allTok(b.tokens))}. Input/output only: ${io(b.tokens)}. Resets ${hhmm(b.resets!)}.` : "No 5-hour block is running: the next one starts at your next message, floored to the hour.",
+    `Week (rolling last 7 days, not a calendar week): ${big(allTok(u.week))}. Input/output only: ${io(u.week)}.`,
+    `Updated ${hhmm(u.at)}.`,
+  ].filter(Boolean).join("\n");
+  return { text, tip };
+}
 const store = {
   get(k: string) { try { return localStorage.getItem(k); } catch { return null; } },
   set(k: string, v: string) { try { localStorage.setItem(k, v); } catch { /* private mode */ } },
@@ -1027,6 +1050,8 @@ function renderChat() {
   $("chatname").textContent = c.name;
   const t = S!.threads.find((x) => x.id === c.id), m = t?.meter;
   $("chatctx").textContent = m?.tokens ? `${Math.round(m.share * 100)}% of window (${fmt(m.tokens)})` : "";
+  const use = usageText(S!.usage), useEl = $("chatuse");
+  useEl.textContent = use.text; useEl.title = use.tip; useEl.hidden = !use.text;
   const bar = $("chatbar");
   bar.hidden = !m?.tokens;
   bar.style.setProperty("--w", `${Math.min(100, Math.round((m?.share ?? 0) * 100))}%`);

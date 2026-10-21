@@ -354,6 +354,8 @@ button:disabled { opacity: .5; cursor: default; }
 .chead .btn { height: 28px; font-size: 11px; padding: 0 10px; }
 .chead .grow { flex: 1; }
 .cctx { color: var(--dim); font-size: 12px; }
+.cuse { color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; cursor: help; font-variant-numeric: tabular-nums; }
+.cuse[hidden] { display: none; }
 .cterm { min-height: 0; padding: 8px 0 4px 12px; background: var(--bg); }
 .cterm .xterm-viewport { background: transparent !important; }
 .chat.max { top: 16px !important; width: calc(100vw - 32px) !important; }

@@ -16,6 +16,7 @@ export { WeaveError, nodeForPath, nodeIndex, featureOf } from "./engine/map.js";
 export { appendEvent, recentEvents, readThreads, writeThread, removeThreads, transcriptTokens } from "./engine/activity.js";
 export { terminalLaunch, openTerminal, terminalName } from "./engine/terminal.js";
 export { chatLaunch, contextNote, resolveClaude, shouldAutoCompact, ChatSession, COMMANDS, AUTO_QUIET, AUTO_GAP } from "./engine/chat.js";
+export { UsageTracker, usageEntry, dedupe, sum, blocks, currentBlock, total, zero, BLOCK_MS, WEEK_MS } from "./engine/usage.js";
 export { isRemoteSession, remoteReason, REMOTE_MESSAGE } from "./engine/remote.js";
 export { projectPaths, toRelative } from "./paths.js";
 export { debounce, watchFiles, watchProject } from "./watch.js";

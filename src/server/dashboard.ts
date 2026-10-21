@@ -11,6 +11,7 @@ import { WeaveError } from "../engine/map.js";
 import { meter, threadFiles } from "../engine/meter.js";
 import { chatLaunch, contextNote, ChatSession, shouldAutoCompact, COMMANDS, defaultPty, type ChatCommand, type PtySpawner } from "../engine/chat.js";
 import { isRemoteSession, REMOTE_MESSAGE } from "../engine/remote.js";
+import { UsageTracker, type UsageSnapshot } from "../engine/usage.js";
 import { openTerminal, terminalLaunch, type Spawner } from "../engine/terminal.js";
 import { ContextStore, settingsFrom } from "../store.js";
 import type { ActivityEvent, Area, ContextMap, Meter, ThreadInfo } from "../types.js";
@@ -22,7 +23,7 @@ const MIME: Record<string, string> = {
   ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon", ".json": "application/json", ".woff2": "font/woff2",
 };
 
-export interface DashboardOptions { root?: string; port?: number; host?: string; maxPortAttempts?: number; watch?: boolean; spawn?: Spawner; pty?: PtySpawner }
+export interface DashboardOptions { root?: string; port?: number; host?: string; maxPortAttempts?: number; watch?: boolean; spawn?: Spawner; pty?: PtySpawner; /** Where Claude Code keeps transcripts; ~/.claude/projects by default. */ usageDir?: string }
 export interface Dashboard { url: string; port: number; close(): Promise<void> }
 
 /** Listens on `port`, walking upward (3000 -> 3001 -> ...) while ports are taken. */
@@ -95,6 +96,8 @@ export interface StatePayload {
   threads: (ThreadInfo & { meter: Meter; remote: boolean })[];
   /** The embedded chat, when one is open; its id is the thread it runs as. */
   chat: { id: string; name: string; exited?: number } | null;
+  /** Token totals from this PC's transcripts: the open chat, the current 5-hour block, the last 7 days. */
+  usage: UsageSnapshot;
 }
 
 /**
@@ -118,6 +121,10 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
     removeThreads(store.paths, [c.id]);
     pushState();
   };
+  const usage = new UsageTracker({ dir: opts.usageDir });
+  const usageFor = (id?: string) => usage.snapshot(id, id ? readThreads(store.paths)[id]?.transcript : undefined);
+  // Scans run in the background; when one finishes the page gets fresh totals.
+  const refreshUsage = (gap?: number) => { void usage.refresh(gap).then(() => { if (clients.size) pushState(); }); };
   const liveChat = () => (chat && chat.exited === undefined ? chat : undefined);
 
   const broadcast = (msg: unknown) => {
@@ -134,7 +141,7 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
         const contextTokens = transcriptTokens(t.transcript);
         return { ...t, contextTokens, remote: isRemoteSession(t.transcript), meter: meter({ map, events, thread: t, tokens: contextTokens, areas: all, agents, at: "view" }) };
       });
-    return { type: "state", project: projectName(map), map, areas: all.map((a) => ({ ...a, hasAgent: withAgent.has(a.id) })), threads, chat: chat ? { id: chat.id, name: chat.name, ...(chat.exited !== undefined ? { exited: chat.exited } : {}) } : null };
+    return { type: "state", project: projectName(map), map, areas: all.map((a) => ({ ...a, hasAgent: withAgent.has(a.id) })), threads, chat: chat ? { id: chat.id, name: chat.name, ...(chat.exited !== undefined ? { exited: chat.exited } : {}) } : null, usage: usageFor(chat?.id) };
   };
   const pushState = () => broadcast(state());
   const agentsNow = () => { const { map } = store.load(); return writeAgents(store.root, projectName(map), areas(map, events)); };
@@ -229,6 +236,10 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
       if (!trusted(req)) return send(res, 403, { error: "forbidden" });
       const url = (req.url ?? "/").split("?")[0];
       if (url === "/api/state" && req.method === "GET") return send(res, 200, state());
+      if (url === "/api/usage" && req.method === "GET") {
+        await usage.refresh();
+        return send(res, 200, usageFor(new URL(req.url ?? "", "http://x").searchParams.get("session") ?? undefined));
+      }
       if (url === "/api/chat/upload" && req.method === "POST") {
         // A dropped or pasted file: raw bytes in, saved only under <weave data>/temp, and the path is handed back to be typed as @path.
         if (!local || !liveChat()) return send(res, 400, { ok: false, error: "No chat is open." });
@@ -304,11 +315,16 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
       events = [...events, ...fresh].slice(-2000);
       broadcast({ type: "activity", events: fresh });
       pushState();
+      refreshUsage(3000);
     }, 40));
     // A failed rescan (say, the map is locked for longer than the retries) waits for the next change instead of stopping the server.
     watchers.push(watchProject(store.root, () => { try { store.rescan(); } catch (err) { console.error(`[weave] rescan failed: ${(err as Error).message}`); } }));
     // Token counts in transcripts change without any event, so refresh open maps every 20 seconds.
     const tick = setInterval(() => { if (clients.size) pushState(); }, 20_000);
+    // Usage totals: a scan at most every 15 seconds while a page is open, sooner after activity (above).
+    const usageTick = setInterval(() => { if (clients.size) refreshUsage(); }, 15_000);
+    watchers.push({ close: () => clearInterval(usageTick) });
+    refreshUsage();
     watchers.push({ close: () => clearInterval(tick) });
     // /compact is typed for the in-page chat once Claude Code finishes a task. /clear is never sent without a click.
     const manage = setInterval(() => {
