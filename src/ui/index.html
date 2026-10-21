@@ -83,13 +83,18 @@
   </div>
 </div>
 <section class="chat" id="chat" aria-label="Claude Code chat" hidden>
+  <div class="cgrip" id="chatgrip" title="Drag to resize"></div>
   <div class="chead">
+    <span class="cdot" id="chatdot" data-s="idle"></span>
     <b id="chatname">Chat</b>
+    <span class="cstate" id="chatstate"></span>
+    <span class="cbar" id="chatbar" hidden><i></i></span>
     <span class="cctx" id="chatctx"></span>
     <button class="btn fill" id="chathand" hidden title="Save this chat's context window, close the chat, and open a new one that starts with a note listing those files. Nothing is preloaded.">Hand over</button>
     <button class="btn" id="chatcompact" hidden>Compact</button>
     <button class="btn" id="chatclear" hidden>Clear</button>
     <span class="grow"></span>
+    <button class="btn" id="chatmax" title="Make the chat larger">Expand</button>
     <button class="btn" id="chathide" title="Hide the chat. It keeps running.">Hide</button>
     <button class="btn" id="chatclose" title="End this chat">Close chat</button>
   </div>

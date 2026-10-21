@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { dirname, extname, join, normalize, resolve, sep } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, extname, join, normalize, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 import { ActivityTail, readThreads, recentEvents, removeThreads, transcriptTokens, writeThread } from "../engine/activity.js";
@@ -71,6 +71,15 @@ function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
     req.on("end", () => { try { done(data ? JSON.parse(data) : {}); } catch { fail(new WeaveError("Body is not JSON.")); } });
     req.on("error", fail);
   });
+}
+
+/** Largest file the chat accepts from a drop or paste. */
+export const UPLOAD_MAX = 15 * 1024 * 1024;
+/** A safe file name for the chat's temp folder: no folders, no spaces, no odd characters, a bounded length. */
+export function uploadName(raw: string | undefined, now = Date.now()): string {
+  const base = (raw ?? "").split(/[\\/]/).pop() ?? "";
+  const clean = base.normalize("NFKD").replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^[._]+/, "").replace(/_{2,}/g, "_").slice(-60);
+  return `${now}-${clean || "file"}`;
 }
 
 const s = (v: unknown) => (typeof v === "string" ? v : undefined);
@@ -217,6 +226,21 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
       if (!trusted(req)) return send(res, 403, { error: "forbidden" });
       const url = (req.url ?? "/").split("?")[0];
       if (url === "/api/state" && req.method === "GET") return send(res, 200, state());
+      if (url === "/api/chat/upload" && req.method === "POST") {
+        // A dropped or pasted file: raw bytes in, saved only under <weave data>/temp, and the path is handed back to be typed as @path.
+        if (!local || !liveChat()) return send(res, 400, { ok: false, error: "No chat is open." });
+        const len = Number(req.headers["content-length"] ?? 0);
+        if (!len || len > UPLOAD_MAX) return send(res, 413, { ok: false, error: `Files up to ${UPLOAD_MAX / 1024 / 1024} MB only.` });
+        const chunks: Buffer[] = []; let size = 0;
+        for await (const c of req) { size += (c as Buffer).length; if (size > UPLOAD_MAX) return send(res, 413, { ok: false, error: "File too large." }); chunks.push(c as Buffer); }
+        const dir = join(store.paths.weaveDir, "temp");
+        mkdirSync(dir, { recursive: true });
+        // Whatever is a day old goes, so the folder does not grow without end.
+        for (const f of readdirSync(dir)) { try { if (Date.now() - statSync(join(dir, f)).mtimeMs > 864e5) unlinkSync(join(dir, f)); } catch { /* gone already */ } }
+        const file = join(dir, uploadName(new URL(req.url ?? "", "http://x").searchParams.get("name") ?? undefined));
+        writeFileSync(file, Buffer.concat(chunks));
+        return send(res, 200, { ok: true, result: { path: relative(store.root, file).split(sep).join("/"), bytes: size } });
+      }
       const route = routes[url];
       if (route) {
         if (req.method !== "POST" || !(req.headers["content-type"] ?? "").includes("application/json")) return send(res, 405, { error: "POST JSON only" });

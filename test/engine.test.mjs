@@ -372,6 +372,13 @@ test("the embedded chat is local only, whitelists its commands and streams the t
     ws.send(JSON.stringify({ type: "input", data: "hi\r" }));
     await new Promise((r) => setTimeout(r, 50));
     assert.deepEqual(written, ["hi\r"]);
+    // Dropped files land only in the weave temp folder, with a cleaned name.
+    const up = await fetch(`${d.url}/api/chat/upload?name=${encodeURIComponent("..\\..\\my shot (1).png")}`, { method: "POST", headers: { "content-type": "application/octet-stream" }, body: Buffer.from("png") }).then((r) => r.json());
+    assert.equal(up.ok, true);
+    assert.match(up.result.path, /^\.claude\/weave\/temp\/\d+-my_shot_1_\.png$/);
+    assert.equal(readFileSync(join(root, up.result.path), "utf8"), "png");
+    const big = await fetch(`${d.url}/api/chat/upload?name=x`, { method: "POST", headers: { "content-type": "application/octet-stream" }, body: Buffer.alloc(16 * 1024 * 1024) }).then((r) => r.status, () => 413);
+    assert.equal(big, 413);
     assert.match((await post("/api/chat/command", { command: "rm -rf" })).error, /Unknown/);
     assert.equal((await post("/api/chat/command", { command: "compact" })).ok, true);
     await new Promise((r) => setTimeout(r, 250));

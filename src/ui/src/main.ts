@@ -341,7 +341,8 @@ function renderAreas() {
 
 const ICON_TERM = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 5 3 3-3 3M8 11.5h4.5"/></svg>';
 const ICON_SAVE = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 2.5h7v11l-3.5-2.5-3.5 2.5z"/></svg>';
-const ICON_END = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"/></svg>';
+const ICON_MORE = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="8" r=".6"/><circle cx="8" cy="8" r=".6"/><circle cx="12.5" cy="8" r=".6"/></svg>';
+const ICON_END ='<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"/></svg>';
 /** Threads seen in the last day get a row; older ones fold under "older". */
 const RECENT = 864e5;
 /** A thread used in the last ACTIVE ms gets an Active tag and sorts to the top. */
@@ -368,12 +369,10 @@ function threadRow(t: Thread): HTMLLIElement {
   const tip = `${name}\n${state}. ${size}${m.text ? `\n${m.text}` : ""}\n${inPage ? "In-page chat." : "Local Claude Code session."} Click to highlight its files on the map. Double-click to rename.`;
   li.innerHTML = `<span class="ticon"><canvas class="orb" width="32" height="32" data-session="${esc(t.id)}" aria-hidden="true"></canvas><i></i></span>`
     + `<button class="tmain" title="${esc(tip)}">${esc(name)}</button>`
-    + (inPage || (t as Thread & { launched?: boolean }).launched ? `<span class="wmark" title="Opened by WEAVE${inPage ? ", running inside this page" : ""}" aria-label="Opened by WEAVE">W</span>` : "<span hidden></span>")
+    + (inPage || (t as Thread & { launched?: boolean }).launched ? `<span class="wmark" title="Opened by WEAVE${inPage ? ", running inside this page" : ""}" aria-label="Opened by WEAVE">W</span>` : `<span class="wmark none" aria-hidden="true"></span>`)
     + `<span class="tbar" title="${esc(size)}"><i><u class="hot"></u><u class="cold"></u></i><small>${tok ? fmt(tok).replace(/\.\dk$/, "k") : ""}</small></span>`
-    + `<span class="tacts"><button class="ibtn save" title="Save this thread as a context window for a kind of task" aria-label="Save ${esc(name)} as a context window">${ICON_SAVE}</button>`
-    + `<button class="ibtn term" title="Reopen this thread in the chat" aria-label="Open ${esc(name)} in a terminal">${ICON_TERM}</button>`
-    + `<button class="ibtn end" title="End thread: clear it from the map. Areas keep what it taught them." aria-label="End thread ${esc(name)}">${ICON_END}</button></span>`
-    + (hotNow ? `<button class="cont" title="${esc((m.text ?? "") + " Continue in a new chat: WEAVE saves this thread's files as a window, ends this thread here, and opens a new in-page chat whose first message lists them. Nothing is preloaded.")}">Continue</button>` : "<span hidden></span>");
+    + (hotNow ? `<button class="cont" title="${esc((m.text ?? "") + " Continue in a new chat: WEAVE saves this thread's files as a window, ends this thread here, and opens a new in-page chat whose first message lists them. Nothing is preloaded.")}">Continue</button>` : `<span class="cont-slot" aria-hidden="true"></span>`)
+    + `<button class="ibtn tmenu" aria-haspopup="menu" aria-expanded="false" title="Thread actions" aria-label="Actions for ${esc(name)}">${ICON_MORE}</button>`;
   const main = li.querySelector<HTMLButtonElement>(".tmain")!;
   main.addEventListener("dblclick", () => {
     naming = t.id;
@@ -392,18 +391,68 @@ function threadRow(t: Thread): HTMLLIElement {
     input.addEventListener("keydown", (e) => { if (e.key === "Enter") end(true); if (e.key === "Escape") end(false); });
     input.addEventListener("blur", () => end(true));
   });
-  li.querySelector(".ibtn.term")!.addEventListener("click", () => openChat(t.id));
-  li.querySelector(".cont")?.addEventListener("click", () => handOver(t.id));
-  li.querySelector(".ibtn.save")!.addEventListener("click", () => {
+  const openTerm = () => openChat(t.id);
+  const save = () => {
     const w = prompt("Name this context window for a kind of task", name);
     if (w?.trim()) api("/api/windows/save", { thread: t.id, name: w.trim() }).then((r) => toast(`Saved "${w.trim()}": ${r.files} file${r.files === 1 ? "" : "s"}.`)).catch((e) => toast(e.message));
+  };
+  const end = () => api("/api/threads/end", { thread: t.id }).then(() => toast("Thread cleared. Areas keep what it taught them.")).catch((e) => toast(e.message));
+  li.querySelector(".cont")?.addEventListener("click", () => handOver(t.id));
+  li.querySelector<HTMLButtonElement>(".tmenu")!.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const btn = e.currentTarget as HTMLButtonElement;
+    toggleMenu(btn, [
+      { icon: ICON_TERM, label: "Open in terminal", tip: "Reopen this thread in the chat", run: openTerm },
+      { icon: ICON_SAVE, label: "Save as window", tip: "Save this thread as a context window for a kind of task", run: save },
+      { icon: ICON_END, label: "End thread", tip: "End thread: clear it from the map. Areas keep what it taught them.", run: end },
+    ]);
   });
   main.addEventListener("click", () => pickThread(t.id));
-  li.querySelector(".ibtn.end")!.addEventListener("click", () => {
-    api("/api/threads/end", { thread: t.id }).then(() => toast("Thread cleared. Areas keep what it taught them.")).catch((e) => toast(e.message));
-  });
   return li;
 }
+
+/** The one open row menu. It lives on the body so a live re-render of the list does not clip or drop it. */
+let rowMenu: { el: HTMLElement; btn: HTMLButtonElement } | null = null;
+function closeMenu(focusBtn = false) {
+  if (!rowMenu) return;
+  const { el, btn } = rowMenu;
+  rowMenu = null;
+  el.remove();
+  if (btn.isConnected) { btn.setAttribute("aria-expanded", "false"); btn.classList.remove("open"); if (focusBtn) btn.focus(); }
+}
+function toggleMenu(btn: HTMLButtonElement, items: { icon: string; label: string; tip: string; run: () => void }[]) {
+  const again = rowMenu?.btn === btn;
+  closeMenu();
+  if (again) return;
+  const el = document.createElement("div");
+  el.className = "rowmenu";
+  el.setAttribute("role", "menu");
+  for (const it of items) {
+    const b = document.createElement("button");
+    b.className = "mitem";
+    b.setAttribute("role", "menuitem");
+    b.title = it.tip;
+    b.innerHTML = `${it.icon}<span>${esc(it.label)}</span>`;
+    b.addEventListener("click", () => { closeMenu(); it.run(); });
+    el.appendChild(b);
+  }
+  document.body.appendChild(el);
+  const r = btn.getBoundingClientRect();
+  el.style.top = `${Math.min(r.bottom + 2, window.innerHeight - el.offsetHeight - 8)}px`;
+  el.style.left = `${Math.max(8, Math.min(r.right - el.offsetWidth, window.innerWidth - el.offsetWidth - 8))}px`;
+  btn.setAttribute("aria-expanded", "true");
+  btn.classList.add("open");
+  rowMenu = { el, btn };
+  el.querySelector<HTMLButtonElement>(".mitem")?.focus();
+  el.addEventListener("keydown", (e) => {
+    const bs = [...el.querySelectorAll<HTMLButtonElement>(".mitem")], i = bs.indexOf(document.activeElement as HTMLButtonElement);
+    if (e.key === "ArrowDown") { e.preventDefault(); bs[(i + 1) % bs.length].focus(); }
+    if (e.key === "ArrowUp") { e.preventDefault(); bs[(i - 1 + bs.length) % bs.length].focus(); }
+  });
+}
+document.addEventListener("click", (e) => { if (rowMenu && !rowMenu.el.contains(e.target as Node)) closeMenu(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && rowMenu) { e.stopPropagation(); closeMenu(true); } }, true);
+window.addEventListener("resize", () => closeMenu());
 
 function renderThreads() {
   if (!S) return;
@@ -567,6 +616,7 @@ $("theme").onclick = () => {
   document.documentElement.dataset.theme = t;
   store.set("weave.theme", t);
   paintTheme();
+  applyChatTheme();
 };
 sysDark.addEventListener?.("change", paintTheme);
 paintTheme();
@@ -820,16 +870,111 @@ function fitChat() {
   if (!term || !fitter || !chatShown) return;
   try { fitter.fit(); } catch { /* not laid out yet */ }
 }
+/** Terminal colours follow the app theme: page colours for text and background, a fixed readable ANSI set per mode. */
+function chatTheme() {
+  const css = getComputedStyle(document.documentElement), v = (n: string, d: string) => css.getPropertyValue(n).trim() || d, dark = isDark();
+  const ansi = dark
+    ? { black: "#2C2F34", red: "#F1A9B0", green: "#CFE19C", yellow: "#F6BE8A", blue: "#A3A9E6", magenta: "#E9A6D2", cyan: "#8FC3E6", white: "#D8DADD",
+        brightBlack: "#6B7078", brightRed: "#F7C3C8", brightGreen: "#DDEBB8", brightYellow: "#F9D1AB", brightBlue: "#BEC3EE", brightMagenta: "#F0C3E1", brightCyan: "#AFD5EE", brightWhite: "#F0F0F1" }
+    : { black: "#0A0B0D", red: "#B3394A", green: "#4F7A1E", yellow: "#9A5B13", blue: "#4651B8", magenta: "#A03C84", cyan: "#1F6F9A", white: "#54575C",
+        brightBlack: "#6B7078", brightRed: "#C9525F", brightGreen: "#62923A", brightYellow: "#B8731F", brightBlue: "#5C67CC", brightMagenta: "#B957A0", brightCyan: "#3188B5", brightWhite: "#0A0B0D" };
+  return { background: v("--bg", dark ? "#0A0B0D" : "#F0F0F1"), foreground: v("--fg", dark ? "#F0F0F1" : "#0A0B0D"), cursor: v("--fg", "#888"),
+    cursorAccent: v("--bg", "#000"), selectionBackground: dark ? "#3A4A8A" : "#BFC5F2", selectionInactiveBackground: dark ? "#2C2F34" : "#D2D3D6", ...ansi };
+}
+const applyChatTheme = () => { if (term) term.options.theme = chatTheme(); };
+sysDark.addEventListener?.("change", applyChatTheme);
+
+/** The map node a path in the output belongs to: the node with the longest path that is the file or a folder above it. */
+function nodeForPath(raw: string): WNode | undefined {
+  let p = raw.replace(/\\/g, "/").replace(/^\.\//, "").replace(/:\d+(:\d+)?$/, "");
+  const root = S?.project.replace(/\\/g, "/").replace(/\/$/, "");
+  if (root && p.toLowerCase().startsWith(root.toLowerCase() + "/")) p = p.slice(root.length + 1);
+  let best: WNode | undefined, len = -1;
+  for (const n of S?.map.nodes ?? []) for (const q of n.paths) {
+    const d = q.replace(/\/$/, "");
+    if ((p === d || p.startsWith(d + "/")) && d.length > len) { best = n; len = d.length; }
+  }
+  return best;
+}
+const URL_RE = /https?:\/\/[^\s<>"'`]+/g, PATH_RE = /(?:[A-Za-z]:[\\/])?(?:[\w.@-]+[\\/])+[\w.@-]+(?::\d+(?::\d+)?)?/g;
+/** Clickable links in the terminal output: web addresses open in a tab, file paths focus their node on the map. Wrapped rows are joined first. */
+function linkProvider(t: Terminal) {
+  return {
+    provideLinks(y: number, done: (l: { range: { start: { x: number; y: number }; end: { x: number; y: number } }; text: string; activate: (e: MouseEvent, text: string) => void }[] | undefined) => void) {
+      const buf = t.buffer.active;
+      let first = y - 1;
+      while (first > 0 && buf.getLine(first)?.isWrapped) first--;
+      let text = "";
+      for (let i = first; i - first < 20; i++) {
+        const line = buf.getLine(i);
+        if (!line || (i > first && !line.isWrapped)) break;
+        text += line.translateToString(true);
+      }
+      const cols = t.cols, out: Parameters<typeof done>[0] = [];
+      const range = (a: number, len: number) => { const b = a + len - 1; return { start: { x: (a % cols) + 1, y: first + Math.floor(a / cols) + 1 }, end: { x: (b % cols) + 1, y: first + Math.floor(b / cols) + 1 } }; };
+      const taken: [number, number][] = [];
+      for (const m of text.matchAll(URL_RE)) {
+        const url = m[0].replace(/[.,;:!?)\]}]+$/, "");
+        taken.push([m.index!, m.index! + url.length]);
+        out.push({ text: url, range: range(m.index!, url.length), activate: (_e, u) => { window.open(u, "_blank", "noopener"); } });
+      }
+      for (const m of text.matchAll(PATH_RE)) {
+        const a = m.index!, b = a + m[0].length;
+        if (taken.some(([x, z]) => a < z && b > x)) continue;
+        const n = nodeForPath(m[0]);
+        if (n) out.push({ text: m[0], range: range(a, m[0].length), activate: (_e, p) => { const hit = nodeForPath(p); if (hit) focusNode(hit.id); } });
+      }
+      done(out.length ? out : undefined);
+    },
+  };
+}
+async function pasteIntoChat() {
+  try { const text = await navigator.clipboard.readText(); if (text) term?.paste(text); } catch { toast("Allow clipboard access to paste, or press Ctrl+V."); }
+}
+/** Dropped or pasted files go to the server's temp folder; what comes back is typed into the terminal as @path for Claude Code to read. */
+async function attachFiles(files: File[]) {
+  const refs: string[] = [];
+  for (const f of files) {
+    if (f.size > 15 * 1024 * 1024) { toast(`${f.name || "File"} is over 15 MB.`); continue; }
+    try {
+      const res = await fetch(`/api/chat/upload?name=${encodeURIComponent(f.name || "pasted." + (f.type.split("/")[1] || "bin"))}`, { method: "POST", headers: { "content-type": "application/octet-stream" }, body: f });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json.ok === false) throw new Error(json.error ?? `Upload failed (${res.status})`);
+      refs.push("@" + json.result.path);
+    } catch (e) { toast((e as Error).message); }
+  }
+  if (refs.length) { term?.paste(refs.join(" ") + " "); term?.focus(); toast(`Attached ${refs.length} file${refs.length === 1 ? "" : "s"}.`); }
+}
+let lastOut = 0;
 function attachChat(id: string) {
   if (chatId !== id || !term) {
     term?.dispose();
     $("cterm").innerHTML = "";
-    const css = getComputedStyle(document.documentElement);
-    term = new Terminal({ cursorBlink: true, fontSize: 13, fontFamily: "ui-monospace, Consolas, monospace", scrollback: 5000,
-      theme: { background: css.getPropertyValue("--bg").trim() || "#0A0B0D", foreground: css.getPropertyValue("--fg").trim() || "#F0F0F1" } });
+    term = new Terminal({ cursorBlink: true, fontSize: 14, lineHeight: 1.15, scrollback: 50000, allowProposedApi: true, rightClickSelectsWord: true,
+      fontFamily: "'Cascadia Code', 'Cascadia Mono', 'JetBrains Mono', 'SF Mono', Menlo, Consolas, 'DejaVu Sans Mono', ui-monospace, monospace", theme: chatTheme() });
     fitter = new FitAddon();
     term.loadAddon(fitter);
     term.open($("cterm"));
+    term.registerLinkProvider(linkProvider(term));
+    const t = term;
+    // Ctrl+C copies while text is selected (otherwise it still interrupts Claude); Ctrl+V pastes through the browser's paste event, so text is bracketed-paste aware.
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type !== "keydown" || !(e.ctrlKey || e.metaKey)) return true;
+      const k = e.key.toLowerCase();
+      if (k === "c" && t.hasSelection()) { navigator.clipboard?.writeText(t.getSelection()).catch(() => {}); t.clearSelection(); return false; }
+      return k !== "v";
+    });
+    const box = $("cterm");
+    box.oncontextmenu = (e) => { e.preventDefault(); if (t.hasSelection()) { navigator.clipboard?.writeText(t.getSelection()).catch(() => {}); t.clearSelection(); } else void pasteIntoChat(); };
+    // Pasted images and dropped files become @path references.
+    box.addEventListener("paste", (e) => {
+      const files = [...(e.clipboardData?.files ?? [])];
+      if (files.length) { e.preventDefault(); e.stopPropagation(); void attachFiles(files); }
+    }, true);
+    const dropping = (on: boolean) => $("chat").classList.toggle("drop", on);
+    $("chat").ondragover = (e) => { if (e.dataTransfer?.types.includes("Files")) { e.preventDefault(); dropping(true); } };
+    $("chat").ondragleave = (e) => { if (e.target === $("chat")) dropping(false); };
+    $("chat").ondrop = (e) => { e.preventDefault(); dropping(false); const files = [...(e.dataTransfer?.files ?? [])]; if (files.length) void attachFiles(files); };
     term.onData((data) => sendChat({ type: "input", data }));
     term.onResize(({ cols, rows }) => sendChat({ type: "resize", cols, rows }));
     chatId = id;
@@ -839,13 +984,20 @@ function attachChat(id: string) {
   ws.onopen = () => { term?.reset(); fitChat(); if (term) sendChat({ type: "resize", cols: term.cols, rows: term.rows }); };
   ws.onmessage = (m) => {
     const msg = JSON.parse(m.data);
-    if (msg.type === "output") term?.write(msg.data);
+    if (msg.type === "output") { lastOut = Date.now(); term?.write(msg.data); }
     else if (msg.type === "exit") term?.write(`
 [Claude Code exited with code ${msg.code}]
 `);
   };
   ws.onclose = () => { if (chatWs === ws) chatWs = undefined; };
 }
+/** Working while output is arriving, idle after a pause, ended when Claude Code exited. */
+function paintChatState() {
+  const c = S?.chat, dot = $("chatdot");
+  const st = !c ? "off" : c.exited !== undefined ? "ended" : Date.now() - lastOut < 1500 ? "working" : "idle";
+  if (dot.dataset.s !== st) { dot.dataset.s = st; dot.title = $("chatstate").textContent = st === "working" ? "Working" : st === "ended" ? "Ended" : st === "idle" ? "Idle" : ""; }
+}
+setInterval(paintChatState, 500);
 function renderChat() {
   const c = S?.chat, live = !!c && c.exited === undefined;
   $("chatbtn").textContent = live ? (chatShown ? "Hide chat" : "Show chat") : "Open chat";
@@ -854,6 +1006,11 @@ function renderChat() {
   $("chatname").textContent = c.name;
   const t = S!.threads.find((x) => x.id === c.id), m = t?.meter;
   $("chatctx").textContent = m?.tokens ? `${Math.round(m.share * 100)}% of window (${fmt(m.tokens)})` : "";
+  const bar = $("chatbar");
+  bar.hidden = !m?.tokens;
+  bar.style.setProperty("--w", `${Math.min(100, Math.round((m?.share ?? 0) * 100))}%`);
+  bar.dataset.level = m?.level ?? "";
+  paintChatState();
   const level = live && S!.map.settings.meter ? m?.level : undefined;
   $("chathand").hidden = level !== "compact" && level !== "clear";
   $("chatcompact").hidden = level !== "compact";
@@ -895,6 +1052,28 @@ async function handOver(id: string) {
 $("chatcompact").onclick = () => api("/api/chat/command", { command: "compact" }).then(() => toast("Sent /compact.")).catch((e) => toast(e.message));
 $("chatclear").onclick = () => api("/api/chat/command", { command: "clear" }).then(() => toast("Sent /clear.")).catch((e) => toast(e.message));
 new ResizeObserver(() => fitChat()).observe($("cterm"));
+// Drag the top-left corner to resize the panel; the size is remembered. Expand toggles a near full-screen panel.
+const chatEl = $("chat");
+const setChatSize = (w: number, top: number) => {
+  chatEl.style.width = `${Math.max(360, Math.min(innerWidth - 32, w))}px`;
+  chatEl.style.top = `${Math.max(16, Math.min(innerHeight - 200, top))}px`;
+};
+try { const sv = JSON.parse(store.get("weave.chatSize") || "null"); if (sv) setChatSize(sv.w, sv.top); } catch { /* default size */ }
+$("chatgrip").onpointerdown = (e) => {
+  e.preventDefault();
+  const grip = $("chatgrip"), right = chatEl.getBoundingClientRect().right;
+  grip.setPointerCapture(e.pointerId);
+  const move = (ev: PointerEvent) => { setChatSize(right - ev.clientX, ev.clientY); fitChat(); };
+  const up = () => {
+    grip.removeEventListener("pointermove", move); grip.removeEventListener("pointerup", up);
+    const r = chatEl.getBoundingClientRect();
+    store.set("weave.chatSize", JSON.stringify({ w: r.width, top: r.top }));
+    fitChat();
+  };
+  grip.addEventListener("pointermove", move); grip.addEventListener("pointerup", up);
+};
+$("chatmax").onclick = () => { const on = chatEl.classList.toggle("max"); $("chatmax").textContent = on ? "Restore" : "Expand"; requestAnimationFrame(fitChat); };
+addEventListener("resize", () => { if (chatEl.style.width) setChatSize(parseFloat(chatEl.style.width), parseFloat(chatEl.style.top)); fitChat(); });
 
 let retry = 500;
 function connect() {
