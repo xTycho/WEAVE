@@ -328,7 +328,7 @@ function threadRow(t: Thread): HTMLLIElement {
     + `<span class="tbar" title="${esc(size)}"><i></i><small>${tok ? fmt(tok).replace(/\.\dk$/, "k") : ""}</small></span>`
     + (LEVEL[m.level] ? `<span class="advice" title="${esc(m.text ?? "")}">${esc(LEVEL[m.level])}</span>` : "<span hidden></span>")
     + (isActive(t) ? `<span class="active" title="Used in the last ${ACTIVE / MIN} minutes">Active</span>` : "<span hidden></span>")
-    + `<button class="ibtn term" title="Reopen this thread in a terminal window" aria-label="Open ${esc(name)} in a terminal">${ICON_TERM}</button>`
+    + `<button class="ibtn term" title="Reopen this thread in the chat" aria-label="Open ${esc(name)} in a terminal">${ICON_TERM}</button>`
     + `<button class="ibtn end" title="End thread: clear it from the map. Areas keep what it taught them." aria-label="End thread ${esc(name)}">${ICON_END}</button>`;
   const main = li.querySelector<HTMLButtonElement>(".tmain")!;
   main.addEventListener("dblclick", () => {
@@ -349,7 +349,7 @@ function threadRow(t: Thread): HTMLLIElement {
     input.addEventListener("blur", () => end(true));
   });
   li.querySelector(".ibtn.term")!.addEventListener("click", () => {
-    api("/api/terminal", { resume: t.id }).then(() => toast("Terminal opened.")).catch((e) => toast(e.message));
+    openChat(t.id);
   });
   li.querySelector(".ibtn.end")!.addEventListener("click", () => {
     api("/api/threads/end", { thread: t.id }).then(() => toast("Thread cleared. Areas keep what it taught them.")).catch((e) => toast(e.message));
@@ -381,7 +381,6 @@ function renderThreads() {
 }
 
 $("agents").onclick = () => api("/api/agents").then((r) => toast(`Subagents: ${r.written.length} written, ${r.removed.length} removed.`)).catch((e) => toast(e.message));
-$("newterm").onclick = () => api("/api/terminal", {}).then((name) => toast(`Opened a terminal for ${name}.`)).catch((e) => toast(e.message));
 $("rescan").onclick = () => api("/api/rescan").then(() => toast("Rescanned the project.")).catch((e) => toast(e.message));
 
 // ---------- Search ----------
@@ -777,13 +776,18 @@ function renderChat() {
   if (live && chatShown && (chatId !== c.id || !chatWs)) attachChat(c.id);
   if (chatShown) requestAnimationFrame(fitChat);
 }
-$("chatbtn").onclick = async () => {
+async function openChat(resume?: string) {
   try {
-    if (!S?.chat) await api("/api/chat/open", {});
-    chatShown = !(chatShown && S?.chat);
+    if (S?.chat && resume && S.chat.id !== resume) return toast("Close the open chat first. One chat at a time.");
+    if (!S?.chat) await api("/api/chat/open", resume ? { resume } : {});
+    chatShown = resume ? true : !(chatShown && S?.chat);
     renderChat();
-  } catch (e) { toast((e as Error).message); }
-};
+  } catch (e) {
+    const msg = (e as Error).message;
+    toast(/not found/i.test(msg) ? "This WEAVE server is older than the page. Restart it (weave ui) to use the chat." : msg);
+  }
+}
+$("chatbtn").onclick = () => openChat();
 $("chathide").onclick = () => { chatShown = false; renderChat(); };
 $("chatclose").onclick = () => api("/api/chat/close").then(() => toast("Chat closed.")).catch((e) => toast(e.message));
 $("chatcompact").onclick = () => api("/api/chat/command", { command: "compact" }).then(() => toast("Sent /compact.")).catch((e) => toast(e.message));
