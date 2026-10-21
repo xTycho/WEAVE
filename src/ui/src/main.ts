@@ -368,7 +368,7 @@ function threadRow(t: Thread): HTMLLIElement {
   const tip = `${name}\n${state}. ${size}${m.text ? `\n${m.text}` : ""}\n${inPage ? "In-page chat." : "Local Claude Code session."} Click to highlight its files on the map. Double-click to rename.`;
   li.innerHTML = `<span class="ticon"><canvas class="orb" width="32" height="32" data-session="${esc(t.id)}" aria-hidden="true"></canvas><i></i></span>`
     + `<button class="tmain" title="${esc(tip)}">${esc(name)}</button>`
-    + (inPage ? `<span class="chip" title="Runs inside this page">In page</span>` : "<span hidden></span>")
+    + (inPage || (t as Thread & { launched?: boolean }).launched ? `<span class="wmark" title="Opened by WEAVE${inPage ? ", running inside this page" : ""}" aria-label="Opened by WEAVE">W</span>` : "<span hidden></span>")
     + `<span class="tbar" title="${esc(size)}"><i><u class="hot"></u><u class="cold"></u></i><small>${tok ? fmt(tok).replace(/\.\dk$/, "k") : ""}</small></span>`
     + `<span class="tacts"><button class="ibtn save" title="Save this thread as a context window for a kind of task" aria-label="Save ${esc(name)} as a context window">${ICON_SAVE}</button>`
     + `<button class="ibtn term" title="Reopen this thread in the chat" aria-label="Open ${esc(name)} in a terminal">${ICON_TERM}</button>`
