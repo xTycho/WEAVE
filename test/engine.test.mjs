@@ -8,7 +8,7 @@ import { join } from "node:path";
 import {
   ContextStore, scanProject, listenWithFallback, nodeForPath, handleHook, recentEvents, threadName, titleFrom, startDashboard,
   normalizeMap, appendEvent, readThreads, removeThreads, writeThread, areas, agentAreas, writeAgents, mapNote, MARK, meter, meterLine,
-  staleTokens, createTools, CLEAR_LOOK, chatLaunch, contextNote, resolveClaude, shouldAutoCompact, AUTO_QUIET, AUTO_GAP,
+  staleTokens, createTools, isRemoteSession, remoteReason, CLEAR_LOOK, chatLaunch, contextNote, resolveClaude, shouldAutoCompact, AUTO_QUIET, AUTO_GAP,
 } from "../dist/index.js";
 
 function write(root, rel, text) {
@@ -429,4 +429,59 @@ test("the Stop hook records when Claude Code finished a turn", () => {
   handleHook({ hook_event_name: "Stop", session_id: "s1", cwd: root }, root);
   assert.ok(readThreads(store.paths).s1.stopped > 0);
   rmSync(root, { recursive: true, force: true });
+});
+
+/** Writes a transcript of JSON lines and returns its path. */
+function rcTranscript(dir, name, entries) {
+  const file = join(dir, name);
+  writeFileSync(file, entries.map((e) => JSON.stringify(e)).join("\n") + "\n");
+  return file;
+}
+
+test("a Remote Control session is told from a terminal one by fixed markers in its transcript", () => {
+  const dir = mkdtempSync(join(tmpdir(), "weave-rc-"));
+  const user = (extra, content = "hello") => ({ type: "user", message: { role: "user", content }, ...extra });
+  const rc = rcTranscript(dir, "rc.jsonl", [{ type: "queue-operation" }, { type: "attachment", entrypoint: "claude-desktop", userType: "external" }, user({ entrypoint: "claude-desktop" }, '<relay from="coordinator" reason="spawn">x</relay>')]);
+  const relayed = rcTranscript(dir, "relayed.jsonl", [user({ projectsUserTurn: true, verifiedSlackHumanTurn: true })]);
+  const sub = rcTranscript(dir, "sub.jsonl", [user({ origin: { kind: "task-notification", subkind: "projects-relay" } })]);
+  const wake = rcTranscript(dir, "wake.jsonl", [user({ entrypoint: "cli" }, "<wake reason='x'>go</wake>")]);
+  const msg = rcTranscript(dir, "msg.jsonl", [user({}, [{ type: "text", text: "via project_claude_message" }])]);
+  const cli = rcTranscript(dir, "cli.jsonl", [{ type: "attachment", entrypoint: "cli", userType: "external" }, user({ entrypoint: "cli", turnOrigin: "human", origin: { kind: "human" } }, "fix the bug")]);
+  const sdk = rcTranscript(dir, "sdk.jsonl", [user({ entrypoint: "sdk-cli", turnOrigin: "sdk" })]);
+  for (const f of [rc, relayed, sub, wake, msg]) assert.equal(isRemoteSession(f), true, f);
+  for (const f of [cli, sdk, join(dir, "missing.jsonl")]) assert.equal(isRemoteSession(f), false, f);
+  assert.equal(isRemoteSession(undefined), false);
+  assert.equal(remoteReason(['not json', JSON.stringify(user({ entrypoint: "cli" }))]), undefined);
+  assert.equal(remoteReason([JSON.stringify(user({ isMeta: true, projectsUserTurn: true }))]), undefined, "meta entries are not the user's turns");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("a Remote Control thread is tracked only: no chat or terminal may resume it", async () => {
+  const root = project();
+  const dir = mkdtempSync(join(tmpdir(), "weave-rc-"));
+  const rcFile = rcTranscript(dir, "rc.jsonl", [{ type: "user", entrypoint: "claude-desktop", projectsUserTurn: true, message: { content: "hi" } }]);
+  const cliFile = rcTranscript(dir, "cli.jsonl", [{ type: "user", entrypoint: "cli", message: { content: "hi" } }]);
+  const paths = new ContextStore(root).paths;
+  writeThread(paths, "11111111-1111-4111-8111-111111111111", { name: "Remote", transcript: rcFile });
+  writeThread(paths, "22222222-2222-4222-8222-222222222222", { name: "Local", transcript: cliFile });
+  const calls = [];
+  const spawn = (command, args) => { calls.push({ command, args }); return { unref() {}, on() {} }; };
+  const spawned = [];
+  const pty = (file, args) => { spawned.push({ file, args }); return { onData() {}, onExit() {}, write() {}, resize() {}, kill() {}, pid: 1 }; };
+  const d = await startDashboard({ root, port: 3790, watch: false, spawn, pty });
+  const post = (path, body) => fetch(`${d.url}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const rc = "11111111-1111-4111-8111-111111111111";
+  for (const path of ["/api/chat/open", "/api/terminal"]) {
+    const r = await post(path, { resume: rc });
+    assert.equal(r.status, 400, path);
+    assert.match((await r.json()).error, /Remote Control/);
+  }
+  assert.equal(calls.length, 0, "no terminal was started");
+  assert.equal(spawned.length, 0, "no chat was started");
+  const body = await (await fetch(`${d.url}/api/state`)).json(), state = body.result ?? body;
+  assert.equal(state.threads.find((t) => t.id === rc).remote, true);
+  assert.equal(state.threads.find((t) => t.name === "Local").remote, false);
+  await d.close();
+  rmSync(root, { recursive: true, force: true });
+  rmSync(dir, { recursive: true, force: true });
 });

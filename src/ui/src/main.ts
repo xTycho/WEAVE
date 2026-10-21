@@ -13,7 +13,7 @@ type Level = "ok" | "delegate" | "compact" | "clear";
 interface WNode { id: string; label: string; tier: Tier; kind: Kind; paths: string[]; of: string[]; bytes: number; tokens: number; command?: string }
 interface Area { id: string; name: string; agent: string; features: string[]; folders: string[]; files: string[]; tokens: number; threads: number; from: "usage" | "folders"; hasAgent: boolean }
 interface Meter { level: Level; tokens?: number; window: number; share: number; stale: number; text?: string; agent?: string }
-interface Thread { id: string; name: string; startedAt: number; lastSeen: number; contextTokens?: number; prompts?: number[]; meter: Meter }
+interface Thread { id: string; name: string; remote?: boolean; startedAt: number; lastSeen: number; contextTokens?: number; prompts?: number[]; meter: Meter }
 interface Settings { window: number; compactAt: number; meter: boolean }
 interface Saved { id: string; name: string; files: string[]; tokens: number; savedAt: string }
 interface State {
@@ -352,12 +352,14 @@ let showOld = false;
 /** The thread whose name is being typed; a live update must not wipe it. */
 let naming: string | null = null;
 
+const REMOTE_TIP = "Started by Remote Control, so WEAVE only tracks it. Open it from the Claude app, not here.";
+
 /** One line per thread: what it is doing, its name, how full its window is, and the meter's advice. */
 function threadRow(t: Thread): HTMLLIElement {
   const li = document.createElement("li");
   const verb = threadVerb(t.id), name = threadLabel(t), live = working(t.id), m = t.meter, tok = m.tokens ?? 0;
   const level = m.level === "clear" || m.level === "compact" ? "ctx-full" : m.level === "delegate" ? "ctx-heavy" : "ctx-ok";
-  const hotNow = m.level === "compact" || m.level === "clear";
+  const remote = !!t.remote, hotNow = !remote && (m.level === "compact" || m.level === "clear");
   const inPage = S?.chat?.id === t.id, cold = Math.min(m.share, (m.stale || 0) / (m.window || 1)), hot = Math.max(0, Math.min(1, m.share) - cold);
   li.className = "thread" + (verb ? " busy" : live ? " live" : "") + ` ${level}` + (T === t.id ? " sel" : "");
   li.dataset.id = t.id;
@@ -371,7 +373,7 @@ function threadRow(t: Thread): HTMLLIElement {
     + `<button class="tmain" title="${esc(tip)}">${esc(name)}</button>`
     + (inPage || (t as Thread & { launched?: boolean }).launched ? `<span class="wmark" title="Opened by WEAVE${inPage ? ", running inside this page" : ""}" aria-label="Opened by WEAVE">W</span>` : `<span class="wmark cc" title="Claude Code" aria-label="Claude Code" role="img"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false"><g stroke="#D9573B" stroke-width="1.7" stroke-linecap="round"><path d="M8 1.8v12.4M2.6 4.9l10.8 6.2M2.6 11.1l10.8-6.2"/></g></svg></span>`)
     + `<span class="tbar" title="${esc(size)}"><i><u class="hot"></u><u class="cold"></u></i><small>${tok ? fmt(tok).replace(/\.\dk$/, "k") : ""}</small></span>`
-    + (hotNow ? `<button class="cont" title="${esc((m.text ?? "") + " Continue in a new chat: WEAVE saves this thread's files as a window, ends this thread here, and opens a new in-page chat whose first message lists them. Nothing is preloaded.")}">Continue</button>` : `<span class="cont-slot" aria-hidden="true"></span>`)
+    + (hotNow ? `<button class="cont" title="${esc((m.text ?? "") + " Continue in a new chat: WEAVE saves this thread's files as a window, ends this thread here, and opens a new in-page chat whose first message lists them. Nothing is preloaded.")}">Continue</button>` : remote ? `<span class="cont-slot tracked" title="${esc(REMOTE_TIP)}" tabindex="0">tracked only</span>` : `<span class="cont-slot" aria-hidden="true"></span>`)
     + `<button class="ibtn tmenu" aria-haspopup="menu" aria-expanded="false" title="Thread actions" aria-label="Actions for ${esc(name)}">${ICON_MORE}</button>`;
   const main = li.querySelector<HTMLButtonElement>(".tmain")!;
   main.addEventListener("dblclick", () => {
@@ -398,14 +400,18 @@ function threadRow(t: Thread): HTMLLIElement {
   };
   const end = () => api("/api/threads/end", { thread: t.id }).then(() => toast("Thread cleared. Areas keep what it taught them.")).catch((e) => toast(e.message));
   li.querySelector(".cont")?.addEventListener("click", () => handOver(t.id));
+  // A Remote Control thread is live elsewhere: resuming it here would run a second copy, so only ending it from the map is offered.
+  const items = [
+    ...(remote ? [] : [
+      { icon: ICON_TERM, label: "Open in terminal", tip: "Reopen this thread in the chat", run: openTerm },
+      { icon: ICON_SAVE, label: "Save as window", tip: "Save this thread as a context window for a kind of task", run: save },
+    ]),
+    { icon: ICON_END, label: "End thread", tip: "End thread: clear it from the map. Areas keep what it taught them.", run: end },
+  ];
   li.querySelector<HTMLButtonElement>(".tmenu")!.addEventListener("click", (e) => {
     e.stopPropagation();
     const btn = e.currentTarget as HTMLButtonElement;
-    toggleMenu(btn, [
-      { icon: ICON_TERM, label: "Open in terminal", tip: "Reopen this thread in the chat", run: openTerm },
-      { icon: ICON_SAVE, label: "Save as window", tip: "Save this thread as a context window for a kind of task", run: save },
-      { icon: ICON_END, label: "End thread", tip: "End thread: clear it from the map. Areas keep what it taught them.", run: end },
-    ]);
+    toggleMenu(btn, items);
   });
   main.addEventListener("click", () => pickThread(t.id));
   return li;

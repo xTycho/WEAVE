@@ -10,6 +10,7 @@ import { agentAreas, areas } from "../engine/areas.js";
 import { WeaveError } from "../engine/map.js";
 import { meter, threadFiles } from "../engine/meter.js";
 import { chatLaunch, contextNote, ChatSession, shouldAutoCompact, COMMANDS, defaultPty, type ChatCommand, type PtySpawner } from "../engine/chat.js";
+import { isRemoteSession, REMOTE_MESSAGE } from "../engine/remote.js";
 import { openTerminal, terminalLaunch, type Spawner } from "../engine/terminal.js";
 import { ContextStore, settingsFrom } from "../store.js";
 import type { ActivityEvent, Area, ContextMap, Meter, ThreadInfo } from "../types.js";
@@ -91,7 +92,7 @@ export interface StatePayload {
   /** Areas by fixed rules, busiest first; `hasAgent` marks the ones that get a subagent file. */
   areas: (Area & { hasAgent: boolean })[];
   /** Each thread with its meter reading. */
-  threads: (ThreadInfo & { meter: Meter })[];
+  threads: (ThreadInfo & { meter: Meter; remote: boolean })[];
   /** The embedded chat, when one is open; its id is the thread it runs as. */
   chat: { id: string; name: string; exited?: number } | null;
 }
@@ -131,7 +132,7 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
     const threads = Object.values(readThreads(store.paths)).filter((t) => t.lastSeen > week).sort((a, b) => b.lastSeen - a.lastSeen).slice(0, 20)
       .map((t) => {
         const contextTokens = transcriptTokens(t.transcript);
-        return { ...t, contextTokens, meter: meter({ map, events, thread: t, tokens: contextTokens, areas: all, agents, at: "view" }) };
+        return { ...t, contextTokens, remote: isRemoteSession(t.transcript), meter: meter({ map, events, thread: t, tokens: contextTokens, areas: all, agents, at: "view" }) };
       });
     return { type: "state", project: projectName(map), map, areas: all.map((a) => ({ ...a, hasAgent: withAgent.has(a.id) })), threads, chat: chat ? { id: chat.id, name: chat.name, ...(chat.exited !== undefined ? { exited: chat.exited } : {}) } : null };
   };
@@ -161,6 +162,7 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
     "/api/terminal": async (b) => {
       const resume = s(b.resume), old = resume ? readThreads(store.paths)[resume] : undefined;
       if (resume && !old) throw new WeaveError("Unknown thread.");
+      if (old && isRemoteSession(old.transcript)) throw new WeaveError(REMOTE_MESSAGE);
       const n = Math.max(0, ...Object.values(readThreads(store.paths)).map((x) => x.n ?? 0)) + 1;
       const launch = terminalLaunch({ name: s(b.name) ?? old?.name, fallback: `Thread ${n}`, resume });
       await openTerminal(launch, store.root, opts.spawn);
@@ -175,6 +177,7 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
       if (open) return { id: open.id, name: open.name };
       const resume = s(b.resume), old = resume ? readThreads(store.paths)[resume] : undefined;
       if (resume && !old) throw new WeaveError("Unknown thread.");
+      if (old && isRemoteSession(old.transcript)) throw new WeaveError(REMOTE_MESSAGE);
       const n = Math.max(0, ...Object.values(readThreads(store.paths)).map((x) => x.n ?? 0)) + 1;
       const win = !resume && s(b.window) ? (store.load().map.windows ?? []).find((w) => w.id === s(b.window)) : undefined;
       if (s(b.window) && !resume && !win) throw new WeaveError("Unknown context window.");
