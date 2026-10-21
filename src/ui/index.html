@@ -37,10 +37,6 @@
         </details>
       </div>
     </div>
-    <div class="meter" id="meter">
-      <span class="mlabel"><b id="mview">All areas</b><span id="tok"></span></span>
-      <div class="bar" id="mbar"></div>
-    </div>
     <span class="conn" id="conn" role="status" aria-label="Connecting" title="Connecting to the local WEAVE server"></span>
   </header>
   <div class="main">
@@ -53,15 +49,23 @@
       <div class="zoom"><button id="zin" aria-label="Zoom in">+</button><button id="zout" aria-label="Zoom out">−</button><button id="zfit">Fit</button></div>
     </div>
     <aside>
-      <section class="panel" aria-label="Areas">
-        <h2 class="cap">Areas and subagents</h2>
-        <ul class="plist" id="alist"></ul>
-        <div class="prow"><button class="btn fill" id="agents" title="Rewrite .claude/agents/weave-*.md from the current areas">Rewrite subagents</button><button class="btn" id="rescan">Rescan</button></div>
+      <section class="panel" aria-label="Project">
+        <h2 class="cap">Project</h2>
+        <button class="proj" id="proj" type="button" aria-pressed="true" title="Highlight the whole project on the map.">
+          <span class="pname"><b id="pname"></b><em id="ptok"></em></span>
+          <span class="pbar" id="pmbar"></span>
+          <span class="psub" id="pview"></span><span class="psub" id="psub"></span>
+        </button>
       </section>
       <section class="panel" aria-label="Threads">
         <h2 class="cap">Threads</h2>
         <ul class="plist tlist" id="tlist"></ul>
         <div class="prow"><button class="btn fill" id="chatbtn" title="Open Claude Code inside this page. WEAVE names and tracks it and can send /compact or /clear for you.">Open chat</button></div>
+      </section>
+      <section class="panel" aria-label="Context windows">
+        <h2 class="cap">Saved context windows</h2>
+        <ul class="plist wlist" id="wlist"></ul>
+        <p class="note">Save a thread with the bookmark on its row. A new chat from a window starts with a note that lists its files. Nothing is preloaded: Claude reads them, and they count toward its window once it does.</p>
       </section>
       <section class="panel insp" id="insp" hidden></section>
       <section class="panel">
@@ -72,6 +76,11 @@
         <h2 class="cap">History</h2>
         <ul class="feed" id="feed"><li class="empty">Nothing yet. Actions appear here as Claude works.</li></ul>
       </section>
+      <details class="panel fold-areas">
+        <summary class="cap">Areas and subagents</summary>
+        <ul class="plist" id="alist"></ul>
+        <div class="prow"><button class="btn fill" id="agents" title="Rewrite .claude/agents/weave-*.md from the current areas">Rewrite subagents</button><button class="btn" id="rescan">Rescan</button></div>
+      </details>
     </aside>
   </div>
 </div>

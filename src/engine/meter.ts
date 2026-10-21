@@ -47,6 +47,20 @@ export function staleTokens(map: ContextMap, events: ActivityEvent[], session: s
   return sum;
 }
 
+/** The files a thread held in its context, hottest first: what it read or edited, with the tokens each adds. Hot means used within its last KEEP prompts. */
+export function threadFiles(map: ContextMap, events: ActivityEvent[], session: string, prompts: number[] = []): { path: string; tokens: number; hot: boolean }[] {
+  const since = prompts.length >= KEEP ? prompts[prompts.length - KEEP] : 0;
+  const nodes = nodeIndex(map), last = new Map<string, { t: number; path?: string }>();
+  for (const e of own(events, session)) if (e.t >= (last.get(e.node)?.t ?? 0)) last.set(e.node, { t: e.t, path: e.path });
+  const out = new Map<string, { path: string; tokens: number; hot: boolean; t: number }>();
+  for (const [id, v] of last) {
+    const n = nodes.get(id), path = v.path ?? n?.paths[0];
+    if (!n || n.tier !== "element" || n.kind === "tool" || !path) continue;
+    out.set(path, { path, tokens: n.tokens, hot: v.t >= since, t: v.t });
+  }
+  return [...out.values()].sort((a, b) => Number(b.hot) - Number(a.hot) || b.t - a.t).map(({ path, tokens, hot }) => ({ path, tokens, hot }));
+}
+
 /** Files and features this thread used before and since its current message. */
 function split(map: ContextMap, events: ActivityEvent[], session: string, start: number) {
   const nodes = nodeIndex(map);

@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,8 +8,8 @@ import { ActivityTail, readThreads, recentEvents, removeThreads, transcriptToken
 import { projectName, writeAgents } from "../engine/agents.js";
 import { agentAreas, areas } from "../engine/areas.js";
 import { WeaveError } from "../engine/map.js";
-import { meter } from "../engine/meter.js";
-import { chatLaunch, ChatSession, shouldAutoCompact, COMMANDS, defaultPty, type ChatCommand, type PtySpawner } from "../engine/chat.js";
+import { meter, threadFiles } from "../engine/meter.js";
+import { chatLaunch, contextNote, ChatSession, shouldAutoCompact, COMMANDS, defaultPty, type ChatCommand, type PtySpawner } from "../engine/chat.js";
 import { openTerminal, terminalLaunch, type Spawner } from "../engine/terminal.js";
 import { ContextStore, settingsFrom } from "../store.js";
 import type { ActivityEvent, Area, ContextMap, Meter, ThreadInfo } from "../types.js";
@@ -166,7 +167,10 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
       const resume = s(b.resume), old = resume ? readThreads(store.paths)[resume] : undefined;
       if (resume && !old) throw new WeaveError("Unknown thread.");
       const n = Math.max(0, ...Object.values(readThreads(store.paths)).map((x) => x.n ?? 0)) + 1;
-      const launch = chatLaunch({ name: s(b.name) ?? old?.name, fallback: `Thread ${n}`, resume });
+      const win = !resume && s(b.window) ? (store.load().map.windows ?? []).find((w) => w.id === s(b.window)) : undefined;
+      if (s(b.window) && !resume && !win) throw new WeaveError("Unknown context window.");
+      const note = win ? contextNote(win.name, win.files) : undefined;
+      const launch = chatLaunch({ name: s(b.name) ?? old?.name, fallback: `Thread ${n}`, resume, note });
       const mine = chat = new ChatSession(launch, store.root, opts.pty ?? defaultPty);
       // A chat that ends, by Close chat or by Claude Code exiting, takes its thread off the map with it.
       mine.attach((m) => { if (m.type === "exit") endChat(mine); });
@@ -174,6 +178,20 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
       pushState();
       return { id: launch.id, name: launch.name };
     },
+    // Saves what a thread holds as a named window, from the activity log. Names are kept per project, newest last.
+    "/api/windows/save": (b) => {
+      const tid = s(b.thread), name = (s(b.name) ?? "").replace(/\s+/g, " ").trim().slice(0, 60);
+      const t = tid ? readThreads(store.paths)[tid] : undefined;
+      if (!t) throw new WeaveError("Unknown thread.");
+      if (!name) throw new WeaveError("Give the window a name.");
+      const { map } = store.load(), files = threadFiles(map, events, t.id, t.prompts);
+      if (!files.length) throw new WeaveError("This thread has not read or edited any file yet.");
+      const win = { id: randomUUID(), name, files: files.map((f) => f.path), tokens: files.reduce((a, f) => a + f.tokens, 0), savedAt: new Date().toISOString() };
+      store.update((m) => { m.windows = [...(m.windows ?? []).filter((w) => w.name !== name), win].slice(-30); });
+      pushState();
+      return { id: win.id, files: win.files.length };
+    },
+    "/api/windows/delete": (b) => { store.update((m) => { m.windows = (m.windows ?? []).filter((w) => w.id !== s(b.id)); }); pushState(); return true; },
     "/api/chat/close": () => { if (chat) endChat(chat); return true; },
     // Only the two whitelisted commands can be typed for the user.
     "/api/chat/command": (b) => {

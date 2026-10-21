@@ -46,6 +46,8 @@ export function normalizeMap(raw: unknown): ContextMap {
       .filter((l) => typeof l.from === "string" && typeof l.to === "string" && (l.why === "tests" || l.why === "is imported by"))
       .map((l) => ({ from: l.from as string, to: l.to as string, why: l.why as "tests" | "is imported by" })),
     settings: settingsFrom(obj(m.settings)),
+    windows: (Array.isArray(m.windows) ? m.windows : []).map(obj).filter((w) => typeof w.id === "string" && typeof w.name === "string")
+      .map((w) => ({ id: w.id as string, name: w.name as string, files: strs(w.files), tokens: Number(w.tokens) || 0, savedAt: str(w.savedAt) })),
     updatedAt: typeof m.updatedAt === "string" ? m.updatedAt : undefined,
   };
 }

@@ -8,7 +8,7 @@ import { join } from "node:path";
 import {
   ContextStore, scanProject, listenWithFallback, nodeForPath, handleHook, recentEvents, threadName, titleFrom, startDashboard,
   normalizeMap, appendEvent, readThreads, removeThreads, writeThread, areas, agentAreas, writeAgents, mapNote, MARK, meter, meterLine,
-  staleTokens, createTools, CLEAR_LOOK, chatLaunch, resolveClaude, shouldAutoCompact, AUTO_QUIET, AUTO_GAP,
+  staleTokens, createTools, CLEAR_LOOK, chatLaunch, contextNote, resolveClaude, shouldAutoCompact, AUTO_QUIET, AUTO_GAP,
 } from "../dist/index.js";
 
 function write(root, rel, text) {
@@ -383,4 +383,16 @@ test("the embedded chat is local only, whitelists its commands and streams the t
     assert.ok(!after.threads.some((x) => x.id === open.result.id), "and so is its thread");
     assert.match((await post("/api/chat/command", { command: "clear" })).error, /No chat/);
   } finally { await d.close(); }
+});
+
+test("a saved window becomes a first note that only points at safe file paths", () => {
+  const note = contextNote('Fix "login" & co', ["src/a.ts", "x & calc", "../secret", "src/b ts.ts"]);
+  assert.match(note, /^Context window Fix login co\./);
+  assert.match(note, /src\/a\.ts, src\/b ts\.ts\./);
+  assert.doesNotMatch(note, /calc|secret|["&|<>^%]/);
+  assert.match(note, /Nothing is preloaded/);
+  assert.equal(contextNote("x", ["a && b"]), undefined);
+  const claude = { file: "claude", prefix: [] };
+  assert.equal(chatLaunch({ fallback: "T", note }, claude).args.at(-1), note);
+  assert.ok(!chatLaunch({ fallback: "T", note, resume: "0123456789abcdef0123456789abcdef0123" }, claude).args.includes(note), "resume never gets a note");
 });

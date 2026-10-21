@@ -41,11 +41,27 @@ export function resolveClaude(env: NodeJS.ProcessEnv = process.env, platform = p
 }
 
 /** Arguments for a new chat, or for resuming `resume`. Only a generated id and a cleaned name vary. */
-export function chatLaunch(opts: { name?: string; fallback: string; resume?: string }, claude = resolveClaude()): ChatLaunch {
+/** Paths and names that may go into the first note: letters, digits and a few separators, so nothing can reach a shell. */
+const SAFE = /^[\w@+. \-/]+$/;
+
+/**
+ * The first note for a chat started from a saved context window. It points Claude Code at the files; nothing is preloaded,
+ * so Claude reads them like any file and they count toward the window once it does. Undefined when no file is usable.
+ */
+export function contextNote(name: string, files: string[]): string | undefined {
+  const safe = files.filter((f) => SAFE.test(f) && !f.includes("..")).slice(0, 40);
+  if (!safe.length) return undefined;
+  const label = name.replace(/[^\w .-]/g, " ").replace(/\s+/g, " ").trim().slice(0, 60) || "saved window";
+  let list = "";
+  for (const f of safe) { if ((list + f).length > 1800) break; list += (list ? ", " : "") + f; }
+  return `Context window ${label}. These are the files an earlier thread used for this kind of task, hottest first: ${list}. Nothing is preloaded. Read the ones this task needs before you start.`;
+}
+
+export function chatLaunch(opts: { name?: string; fallback: string; resume?: string; note?: string }, claude = resolveClaude()): ChatLaunch {
   const name = terminalName(opts.name, opts.fallback);
   const id = opts.resume ?? randomUUID();
   if (!/^[0-9a-f-]{36}$/i.test(id)) throw new WeaveError("Not a session id.");
-  const args = opts.resume ? ["--resume", id] : ["--session-id", id, "--name", name];
+  const args = opts.resume ? ["--resume", id] : ["--session-id", id, "--name", name, ...(opts.note ? [opts.note] : [])];
   return { id, name, file: claude.file, args: [...claude.prefix, ...args] };
 }
 

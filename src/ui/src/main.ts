@@ -13,11 +13,12 @@ type Level = "ok" | "delegate" | "compact" | "clear";
 interface WNode { id: string; label: string; tier: Tier; kind: Kind; paths: string[]; of: string[]; bytes: number; tokens: number; command?: string }
 interface Area { id: string; name: string; agent: string; features: string[]; folders: string[]; files: string[]; tokens: number; threads: number; from: "usage" | "folders"; hasAgent: boolean }
 interface Meter { level: Level; tokens?: number; window: number; share: number; stale: number; text?: string; agent?: string }
-interface Thread { id: string; name: string; startedAt: number; lastSeen: number; contextTokens?: number; meter: Meter }
+interface Thread { id: string; name: string; startedAt: number; lastSeen: number; contextTokens?: number; prompts?: number[]; meter: Meter }
 interface Settings { window: number; compactAt: number; meter: boolean; fresh: "command" | "thread"; autoCompact: boolean }
+interface Saved { id: string; name: string; files: string[]; tokens: number; savedAt: string }
 interface State {
   project: string;
-  map: { nodes: WNode[]; settings: Settings };
+  map: { nodes: WNode[]; settings: Settings; windows?: Saved[] };
   areas: Area[];
   threads: Thread[];
   chat: { id: string; name: string; exited?: number } | null;
@@ -72,6 +73,27 @@ let shape = "";
 /** The area the map highlights; empty shows every area. */
 let A = store.get("weave.area") ?? "";
 let selected: string | null = null;
+/** The thread the map highlights; empty highlights the whole project (or the chosen area). */
+let T = store.get("weave.thread") ?? "";
+/** What each thread has read, edited or run: node id to the last time. Subagent calls stay out, as in the meter. */
+const touched = new Map<string, Map<string, number>>();
+/** The meter keeps a file while the thread used it within its last KEEP prompts; older use is cold. */
+const KEEP = 3;
+const hotSince = (t: Thread | undefined) => (t?.prompts && t.prompts.length >= KEEP ? t.prompts[t.prompts.length - KEEP] : 0);
+/** Nodes lit for the chosen thread: what it touched, plus the route (core, folder) to each. Undefined when no thread is chosen. */
+let litSet: Set<string> | undefined;
+function computeLit() {
+  const t = T ? S?.threads.find((x) => x.id === T) : undefined;
+  litSet = undefined;
+  if (!t && !(T && S?.chat?.id === T)) { if (T) T = ""; return; }
+  litSet = new Set(["core"]);
+  for (const id of touched.get(T)?.keys() ?? []) {
+    const n = byId.get(id);
+    if (!n) continue;
+    litSet.add(id);
+    n.of.forEach((f) => litSet!.add(f));
+  }
+}
 let hits = new Set<string>();
 const els: Record<string, HTMLDivElement> = {};
 const cords: Record<string, SVGPathElement> = {};
@@ -85,6 +107,7 @@ const colorOf = (a: Area | undefined) => (a && S ? PALETTE[S.areas.indexOf(a) % 
 const featureOf = (n: WNode) => (n.tier === "feature" ? n.id : n.of[0]);
 const areaOfNode = (n: WNode) => { const f = featureOf(n); return f ? S?.areas.find((a) => a.features.includes(f)) : undefined; };
 const inArea = (n: WNode, a = area()) => !a || n.tier === "core" || a.features.includes(featureOf(n) ?? "");
+const lit = (n: WNode) => (litSet ? litSet.has(n.id) : inArea(n));
 
 /** Threads are "Thread <n>" until renamed; old names may still hold wrapper blocks and tags, which are not a name. */
 const WRAPPERS = /<(system-reminder|relay|wake|note|project_claude_message|task-notification|agent-message|command-[\w-]+|local-command-[\w-]+)\b[^>]*>[\s\S]*?<\/\1\b[^>]*>/gi;
@@ -142,14 +165,17 @@ function draw() {
     if (!a || !b) continue;
     const path = document.createElementNS(NS, "path");
     path.setAttribute("d", curve(a, b));
-    path.setAttribute("class", "cord " + (inArea(a) && inArea(b) ? "live" : "off"));
+    path.setAttribute("class", "cord " + (lit(a) && lit(b) ? "live" : "off"));
     gC.append(path);
     cords[p + ">" + c] = path;
   }
   for (const n of N) {
     const d = els[n.id];
     if (!d) continue;
-    const on = inArea(n);
+    const on = lit(n);
+    const own = litSet ? touched.get(T)?.get(n.id) : undefined;
+    d.classList.toggle("hot", own !== undefined && own >= hotSince(S!.threads.find((x) => x.id === T)));
+    d.classList.toggle("cold", own !== undefined && own < hotSince(S!.threads.find((x) => x.id === T)));
     d.style.left = n.x + "px";
     d.style.top = n.y + "px";
     d.classList.toggle("live", on);
@@ -167,7 +193,7 @@ function draw() {
 function drawHull() {
   gH.innerHTML = "";
   const a = area();
-  if (!a) return;
+  if (litSet) return;
   const pts: [number, number][] = [];
   for (const n of N) {
     if (n.tier === "core" || !inArea(n, a)) continue;
@@ -185,10 +211,22 @@ function drawHull() {
 /** One bar for the project: each area's share of the mapped tokens, in its colour. */
 function header() {
   const all = N.reduce((s, n) => s + n.tokens, 0) || 1, a = area();
-  $("mview").textContent = a ? a.name : "All areas";
-  $("tok").textContent = a ? ` · ~${fmt(a.tokens)} of ~${fmt(all)}` : ` · ~${fmt(all)} mapped`;
-  $("mbar").innerHTML = S!.areas.map((x) => `<i class="seg" style="width:${(x.tokens / all) * 100}%;background:${colorOf(x)};opacity:${!a || x.id === a.id ? 1 : 0.25}"></i>`).join("");
-  $("meter").title = "Each area's share of the project's estimated tokens (file size ÷ 4).";
+  const th = T ? S!.threads.find((x) => x.id === T) : undefined;
+  const tt = [...(litSet ?? [])].reduce((s, id) => s + (byId.get(id)?.tier === "element" ? byId.get(id)!.tokens : 0), 0);
+  $("pview").textContent = th ? `Showing ${threadLabel(th)} · ~${fmt(tt)} touched` : a ? `Showing ${a.name} · ~${fmt(a.tokens)} of ~${fmt(all)}` : "Showing the whole project";
+}
+
+/** The Project row: the whole project, its share by area, and how many threads work in it. */
+function renderProject() {
+  if (!S) return;
+  const all = N.reduce((s, n) => s + n.tokens, 0) || 1, whole = !T && !A;
+  $("pname").textContent = S.project;
+  $("ptok").textContent = `~${fmt(all)} tokens`;
+  $("pmbar").innerHTML = S.areas.map((x) => `<i style="width:${(x.tokens / all) * 100}%;background:${colorOf(x)};opacity:${T || (A && x.id !== A) ? 0.3 : 1}" title="${esc(x.name)} · ~${fmt(x.tokens)}"></i>`).join("");
+  const live = S.threads.filter((t) => working(t.id)).length;
+  $("psub").textContent = `${N.filter((n) => n.tier !== "core").length} nodes · ${S.threads.length} thread${S.threads.length === 1 ? "" : "s"}${live ? ` · ${live} working` : ""}`;
+  $("proj").setAttribute("aria-pressed", String(whole));
+  $("proj").classList.toggle("on", whole);
 }
 
 // ---------- Interaction ----------
@@ -294,7 +332,7 @@ function renderAreas() {
       a.from === "usage" ? `${a.threads} thread${a.threads === 1 ? "" : "s"} worked here.` : "No thread has worked here yet, so this is just a folder.",
       a.hasAgent ? `Subagent: ${a.agent}` : "Too small for its own subagent."].filter(Boolean).join("\n");
     b.innerHTML = `<span class="dot" style="background:${colorOf(a)}"></span><b>${esc(a.name)}</b>${a.hasAgent ? `<span class="def">${esc(a.agent)}</span>` : ""}<em>${fmt(a.tokens)}</em>`;
-    b.onclick = () => { A = A === a.id ? "" : a.id; store.set("weave.area", A); selected = null; renderAll(); };
+    b.onclick = () => { A = A === a.id ? "" : a.id; store.set("weave.area", A); setThread(""); selected = null; renderAll(); };
     li.appendChild(b);
     box.appendChild(li);
   }
@@ -302,6 +340,7 @@ function renderAreas() {
 }
 
 const ICON_TERM = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 5 3 3-3 3M8 11.5h4.5"/></svg>';
+const ICON_SAVE = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 2.5h7v11l-3.5-2.5-3.5 2.5z"/></svg>';
 const ICON_END = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"/></svg>';
 /** Threads seen in the last day get a row; older ones fold under "older". */
 const RECENT = 864e5;
@@ -317,17 +356,22 @@ function threadRow(t: Thread): HTMLLIElement {
   const li = document.createElement("li");
   const verb = threadVerb(t.id), name = threadLabel(t), live = working(t.id), m = t.meter, tok = m.tokens ?? 0;
   const level = m.level === "clear" || m.level === "compact" ? "ctx-full" : m.level === "delegate" ? "ctx-heavy" : "ctx-ok";
-  li.className = "thread" + (verb ? " busy" : live ? " live" : "") + ` ${level}`;
+  const inPage = S?.chat?.id === t.id, cold = Math.min(m.share, (m.stale || 0) / (m.window || 1)), hot = Math.max(0, Math.min(1, m.share) - cold);
+  li.className = "thread" + (verb ? " busy" : live ? " live" : "") + ` ${level}` + (T === t.id ? " sel" : "");
+  li.dataset.id = t.id;
   li.style.setProperty("--c", "var(--p-violet)");
-  li.style.setProperty("--fill", String(Math.min(1, m.share)));
+  li.style.setProperty("--hot", String(hot));
+  li.style.setProperty("--cold", String(cold));
   const state = verb ? VERB_ING[verb] : live ? "Working" : `Idle since ${new Date(t.lastSeen).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-  const size = tok ? `${fmt(tok)} of ${fmt(m.window)} tokens (${Math.round(m.share * 100)}%).${m.stale ? ` ~${fmt(m.stale)} of it is files it moved on from.` : ""}` : "Context size not read yet.";
-  const tip = `${name}\n${state}. ${size}${m.text ? `\n${m.text}` : ""}\nDouble-click to rename.`;
+  const size = tok ? `${fmt(tok)} of ${fmt(m.window)} tokens (${Math.round(m.share * 100)}%). Hot: ${fmt(Math.max(0, tok - m.stale))}, cold: ${fmt(m.stale)} (files it moved on from).` : "Context size not read yet.";
+  const tip = `${name}\n${state}. ${size}${m.text ? `\n${m.text}` : ""}\n${inPage ? "In-page chat." : "Local Claude Code session."} Click to highlight its files on the map. Double-click to rename.`;
   li.innerHTML = `<span class="ticon"><canvas class="orb" width="32" height="32" data-session="${esc(t.id)}" aria-hidden="true"></canvas><i></i></span>`
     + `<button class="tmain" title="${esc(tip)}">${esc(name)}</button>`
-    + `<span class="tbar" title="${esc(size)}"><i></i><small>${tok ? fmt(tok).replace(/\.\dk$/, "k") : ""}</small></span>`
+    + (inPage ? `<span class="chip" title="Runs inside this page">In page</span>` : "<span hidden></span>")
+    + `<span class="tbar" title="${esc(size)}"><i><u class="hot"></u><u class="cold"></u></i><small>${tok ? fmt(tok).replace(/\.\dk$/, "k") : ""}</small></span>`
     + (LEVEL[m.level] ? `<span class="advice" title="${esc(m.text ?? "")}">${esc(LEVEL[m.level])}</span>` : "<span hidden></span>")
-    + (isActive(t) ? `<span class="active" title="Used in the last ${ACTIVE / MIN} minutes">Active</span>` : "<span hidden></span>")
+    + (isActive(t) ? `<span class="active" title="Used in the last ${ACTIVE / MIN} minutes" aria-label="Active"></span>` : "<span hidden></span>")
+    + `<button class="ibtn save" title="Save this thread as a context window for a kind of task" aria-label="Save ${esc(name)} as a context window">${ICON_SAVE}</button>`
     + `<button class="ibtn term" title="Reopen this thread in the chat" aria-label="Open ${esc(name)} in a terminal">${ICON_TERM}</button>`
     + `<button class="ibtn end" title="End thread: clear it from the map. Areas keep what it taught them." aria-label="End thread ${esc(name)}">${ICON_END}</button>`;
   const main = li.querySelector<HTMLButtonElement>(".tmain")!;
@@ -348,9 +392,12 @@ function threadRow(t: Thread): HTMLLIElement {
     input.addEventListener("keydown", (e) => { if (e.key === "Enter") end(true); if (e.key === "Escape") end(false); });
     input.addEventListener("blur", () => end(true));
   });
-  li.querySelector(".ibtn.term")!.addEventListener("click", () => {
-    openChat(t.id);
+  li.querySelector(".ibtn.term")!.addEventListener("click", () => openChat(t.id));
+  li.querySelector(".ibtn.save")!.addEventListener("click", () => {
+    const w = prompt("Name this context window for a kind of task", name);
+    if (w?.trim()) api("/api/windows/save", { thread: t.id, name: w.trim() }).then((r) => toast(`Saved "${w.trim()}": ${r.files} file${r.files === 1 ? "" : "s"}.`)).catch((e) => toast(e.message));
   });
+  main.addEventListener("click", () => pickThread(t.id));
   li.querySelector(".ibtn.end")!.addEventListener("click", () => {
     api("/api/threads/end", { thread: t.id }).then(() => toast("Thread cleared. Areas keep what it taught them.")).catch((e) => toast(e.message));
   });
@@ -367,6 +414,11 @@ function renderThreads() {
   box.innerHTML = "";
   const recent = (t: Thread) => working(t.id) || Date.now() - t.lastSeen < RECENT;
   const list = S.threads.filter((t) => showOld || recent(t)).sort((x, y) => Number(isActive(y)) - Number(isActive(x)) || y.lastSeen - x.lastSeen);
+  const chat = S.chat;
+  if (chat && !S.threads.some((t) => t.id === chat.id)) {
+    const st = S.map.settings;
+    list.unshift({ id: chat.id, name: chat.name, startedAt: Date.now(), lastSeen: Date.now(), meter: { level: "ok", window: st.window, share: 0, stale: 0 } });
+  }
   list.forEach((t) => box.appendChild(threadRow(t)));
   const old = S.threads.filter((t) => !recent(t)).length;
   if (old) {
@@ -377,11 +429,42 @@ function renderThreads() {
     more.querySelector<HTMLButtonElement>(".clear")!.onclick = () => api("/api/threads/end", { older: true }).then((n) => toast(`Cleared ${n} older thread${n === 1 ? "" : "s"}.`)).catch((e) => toast(e.message));
     box.appendChild(more);
   }
-  if (!S.threads.length) box.innerHTML = '<li class="empty">No threads yet. They appear here once Claude Code runs in this project with the WEAVE hooks.</li>';
+  if (!S.threads.length && !chat) box.innerHTML = '<li class="empty">No threads yet. They appear here once Claude Code runs in this project with the WEAVE hooks.</li>';
 }
 
 $("agents").onclick = () => api("/api/agents").then((r) => toast(`Subagents: ${r.written.length} written, ${r.removed.length} removed.`)).catch((e) => toast(e.message));
 $("rescan").onclick = () => api("/api/rescan").then(() => toast("Rescanned the project.")).catch((e) => toast(e.message));
+$("proj").onclick = () => { A = ""; store.set("weave.area", A); setThread(""); selected = null; renderAll(); };
+function setThread(id: string) { T = id; store.set("weave.thread", T); }
+/** Click a thread to highlight what it touched; click it again for the whole project. */
+function pickThread(id: string) {
+  setThread(T === id ? "" : id);
+  if (T) { A = ""; store.set("weave.area", A); }
+  selected = null;
+  computeLit();
+  draw();
+  inspect();
+  renderProject();
+  document.querySelectorAll<HTMLElement>("#tlist .thread").forEach((r) => r.classList.toggle("sel", r.dataset.id === T));
+}
+
+/** Saved context windows: a name, the files a thread held, and a button that opens a chat pointed at them. */
+function renderWindows() {
+  if (!S) return;
+  const box = $("wlist"), list = S.map.windows ?? [];
+  box.innerHTML = "";
+  for (const w of list) {
+    const li = document.createElement("li");
+    li.className = "win";
+    li.innerHTML = `<span class="wname" title="${esc(w.files.join("\n"))}"><b>${esc(w.name)}</b><small>${w.files.length} file${w.files.length === 1 ? "" : "s"} · ~${fmt(w.tokens)} tokens</small></span>`
+      + `<button class="btn" title="Open a chat whose first note lists these files. They are not preloaded: Claude reads them.">Open chat</button>`
+      + `<button class="ibtn x" title="Delete this saved window" aria-label="Delete ${esc(w.name)}">${ICON_END}</button>`;
+    li.querySelector(".btn")!.addEventListener("click", () => openChat(undefined, w.id));
+    li.querySelector(".ibtn")!.addEventListener("click", () => api("/api/windows/delete", { id: w.id }).catch((e) => toast(e.message)));
+    box.appendChild(li);
+  }
+  if (!list.length) box.innerHTML = '<li class="empty">None yet. Save one from a thread.</li>';
+}
 
 // ---------- Search ----------
 const qEl = $<HTMLInputElement>("q"), resEl = $("results");
@@ -612,6 +695,12 @@ function onActivity(e: Activity, animate: boolean) {
   const n = byId.get(e.node);
   if (!n || !S) return;
   log(e);
+  if (!e.sub) {
+    if (!touched.has(e.s)) touched.set(e.s, new Map());
+    const m = touched.get(e.s)!;
+    m.set(n.id, Math.max(e.t, m.get(n.id) ?? 0));
+    if (T === e.s) { computeLit(); if (animate) draw(); }
+  }
   if (e.verb === "Edit") { if (!edited.has(e.s)) edited.set(e.s, new Set()); edited.get(e.s)!.add(n.id); }
   if (!animate) return;
   if (n.tier !== "core") active.set(n.id, { verb: e.verb, start: e.t, until: Date.now() + 2500, session: e.s });
@@ -719,11 +808,14 @@ function adopt(next: State) {
   renderAll();
 }
 function renderAll() {
+  computeLit();
   draw();
+  renderProject();
   paintActs();
   inspect();
   renderAreas();
   renderThreads();
+  renderWindows();
   renderSettings();
   renderChat();
 }
@@ -776,11 +868,12 @@ function renderChat() {
   if (live && chatShown && (chatId !== c.id || !chatWs)) attachChat(c.id);
   if (chatShown) requestAnimationFrame(fitChat);
 }
-async function openChat(resume?: string) {
+async function openChat(resume?: string, win?: string) {
   try {
     if (S?.chat && resume && S.chat.id !== resume) return toast("Close the open chat first. One chat at a time.");
-    if (!S?.chat) await api("/api/chat/open", resume ? { resume } : {});
-    chatShown = resume ? true : !(chatShown && S?.chat);
+    if (win && S?.chat) return toast("Close the open chat first. One chat at a time.");
+    if (!S?.chat) await api("/api/chat/open", resume ? { resume } : win ? { window: win } : {});
+    chatShown = resume || win ? true : !(chatShown && S?.chat);
     renderChat();
   } catch (e) {
     const msg = (e as Error).message;

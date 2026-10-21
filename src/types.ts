@@ -38,8 +38,19 @@ export interface Settings {
   autoCompact: boolean;
 }
 
+/** A thread's context window saved for a kind of task: the files it held, so a new chat can be pointed at them. */
+export interface SavedWindow {
+  id: string;
+  name: string;
+  /** Project-relative paths, hottest first. */
+  files: string[];
+  tokens: number;
+  savedAt: string;
+}
+
 export interface ContextMap {
   version: 3;
+  windows?: SavedWindow[];
   scannedAt?: string;
   nodes: WeaveNode[];
   links: Link[];
