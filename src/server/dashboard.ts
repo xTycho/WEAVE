@@ -101,6 +101,12 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
   // The embedded chat gives whoever reaches it a Claude Code session, so it is only offered when the server is bound to this machine.
   const local = ["127.0.0.1", "localhost", "::1"].includes(host);
   let chat: ChatSession | undefined;
+  const endChat = (c: ChatSession) => {
+    c.kill();
+    if (chat === c) chat = undefined;
+    removeThreads(store.paths, [c.id]);
+    pushState();
+  };
   const liveChat = () => (chat && chat.exited === undefined ? chat : undefined);
 
   const broadcast = (msg: unknown) => {
@@ -161,13 +167,14 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
       if (resume && !old) throw new WeaveError("Unknown thread.");
       const n = Math.max(0, ...Object.values(readThreads(store.paths)).map((x) => x.n ?? 0)) + 1;
       const launch = chatLaunch({ name: s(b.name) ?? old?.name, fallback: `Thread ${n}`, resume });
-      chat = new ChatSession(launch, store.root, opts.pty ?? defaultPty);
-      chat.attach((m) => { if (m.type === "exit") pushState(); });
+      const mine = chat = new ChatSession(launch, store.root, opts.pty ?? defaultPty);
+      // A chat that ends, by Close chat or by Claude Code exiting, takes its thread off the map with it.
+      mine.attach((m) => { if (m.type === "exit") endChat(mine); });
       if (!old) writeThread(store.paths, launch.id, { name: launch.name, named: s(b.name) !== undefined, launched: true });
       pushState();
       return { id: launch.id, name: launch.name };
     },
-    "/api/chat/close": () => { chat?.kill(); chat = undefined; pushState(); return true; },
+    "/api/chat/close": () => { if (chat) endChat(chat); return true; },
     // Only the two whitelisted commands can be typed for the user.
     "/api/chat/command": (b) => {
       const cmd = s(b.command) as ChatCommand | undefined, open = liveChat();

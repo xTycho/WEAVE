@@ -378,7 +378,9 @@ test("the embedded chat is local only, whitelists its commands and streams the t
     assert.deepEqual(written.slice(1), ["/compact", "\r"]);
     ws.close();
     exit({ exitCode: 0 });
-    assert.equal((await fetch(`${d.url}/api/state`).then((r) => r.json())).chat.exited, 0);
+    const after = await fetch(`${d.url}/api/state`).then((r) => r.json());
+    assert.equal(after.chat, null, "a chat that exits is gone");
+    assert.ok(!after.threads.some((x) => x.id === open.result.id), "and so is its thread");
     assert.match((await post("/api/chat/command", { command: "clear" })).error, /No chat/);
   } finally { await d.close(); }
 });
