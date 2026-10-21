@@ -6,8 +6,8 @@
   <title>WEAVE Network Map</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='11' y='11' width='10' height='10' rx='3' fill='%23C3A5DD'/%3E%3Crect x='3' y='3' width='26' height='26' rx='8' fill='none' stroke='%23A3A9E6' stroke-width='2.5'/%3E%3C/svg%3E">
   <script>try { document.documentElement.dataset.theme = localStorage.getItem('weave.theme') || 'light'; } catch {}</script>
-  <script type="module" crossorigin src="./assets/index-B7Dj0xge.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-DC_YQ1Vf.css">
+  <script type="module" crossorigin src="./assets/index-CxaYEJjL.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-BJD-uz_n.css">
 </head>
 <body>
 <div class="app">
@@ -24,6 +24,7 @@
         <div class="stack"><span class="cap">Context window</span><div class="seg" id="window"><button class="tab" data-v="200000" aria-pressed="true">200k</button><button class="tab" data-v="1000000" aria-pressed="false">1M</button></div></div>
         <div class="stack"><span><b class="lead">Compact when stale from</b><br><span class="note">Share of the window from which /compact is suggested, when at least a quarter of the thread is files it moved on from.</span></span>
           <div class="nums"><label><input id="compactAt" type="number" min="30" max="95" step="5" inputmode="numeric">%</label></div></div>
+        <div class="switch"><span><b class="lead">Compact the chat automatically</b><br><span class="note">Off: the chat shows a Compact button when the meter says so. On: WEAVE types /compact itself once the chat has been quiet for 8 seconds, at most every 2 minutes. It cannot tell a pause from a permission question, so leave it off if you often answer prompts by hand. /clear is always a click.</span></span><button id="autoCompact" role="switch" aria-checked="false" aria-label="Compact the chat automatically"></button></div>
         <div class="switch"><span><b class="lead">Follow system motion</b><br><span class="note" id="animNote">Pause signals when your device asks apps to reduce motion.</span></span><button id="anim" role="switch" aria-checked="false" aria-label="Follow system motion"></button></div>
         <details class="more">
           <summary><b class="lead">Legend</b></summary>
@@ -42,6 +43,7 @@
       <span class="mlabel"><b id="mview">All areas</b><span id="tok"></span></span>
       <div class="bar" id="mbar"></div>
     </div>
+    <button class="btn fill" id="chatbtn" title="Open Claude Code inside this page. WEAVE can then send /compact or /clear for you.">Open chat</button>
     <span class="conn" id="conn" role="status" aria-label="Connecting" title="Connecting to the local WEAVE server"></span>
   </header>
   <div class="main">
@@ -76,5 +78,17 @@
     </aside>
   </div>
 </div>
+<section class="chat" id="chat" aria-label="Claude Code chat" hidden>
+  <div class="chead">
+    <b id="chatname">Chat</b>
+    <span class="cctx" id="chatctx"></span>
+    <button class="btn" id="chatcompact" hidden>Compact</button>
+    <button class="btn" id="chatclear" hidden>Clear</button>
+    <span class="grow"></span>
+    <button class="btn" id="chathide" title="Hide the chat. It keeps running.">Hide</button>
+    <button class="btn" id="chatclose" title="End this chat">Close chat</button>
+  </div>
+  <div class="cterm" id="cterm"></div>
+</section>
 </body>
 </html>

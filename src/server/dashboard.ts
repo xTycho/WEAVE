@@ -8,6 +8,7 @@ import { projectName, writeAgents } from "../engine/agents.js";
 import { agentAreas, areas } from "../engine/areas.js";
 import { WeaveError } from "../engine/map.js";
 import { meter } from "../engine/meter.js";
+import { chatLaunch, ChatSession, shouldAutoCompact, COMMANDS, defaultPty, type ChatCommand, type PtySpawner } from "../engine/chat.js";
 import { openTerminal, terminalLaunch, type Spawner } from "../engine/terminal.js";
 import { ContextStore, settingsFrom } from "../store.js";
 import type { ActivityEvent, Area, ContextMap, Meter, ThreadInfo } from "../types.js";
@@ -19,7 +20,7 @@ const MIME: Record<string, string> = {
   ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon", ".json": "application/json", ".woff2": "font/woff2",
 };
 
-export interface DashboardOptions { root?: string; port?: number; host?: string; maxPortAttempts?: number; watch?: boolean; spawn?: Spawner }
+export interface DashboardOptions { root?: string; port?: number; host?: string; maxPortAttempts?: number; watch?: boolean; spawn?: Spawner; pty?: PtySpawner }
 export interface Dashboard { url: string; port: number; close(): Promise<void> }
 
 /** Listens on `port`, walking upward (3000 -> 3001 -> ...) while ports are taken. */
@@ -81,6 +82,8 @@ export interface StatePayload {
   areas: (Area & { hasAgent: boolean })[];
   /** Each thread with its meter reading. */
   threads: (ThreadInfo & { meter: Meter })[];
+  /** The embedded chat, when one is open; its id is the thread it runs as. */
+  chat: { id: string; name: string; exited?: number } | null;
 }
 
 /**
@@ -95,6 +98,10 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
   const tail = new ActivityTail(store.paths.activity);
   let events: ActivityEvent[] = recentEvents(store.paths);
   let port = 0;
+  // The embedded chat gives whoever reaches it a Claude Code session, so it is only offered when the server is bound to this machine.
+  const local = ["127.0.0.1", "localhost", "::1"].includes(host);
+  let chat: ChatSession | undefined;
+  const liveChat = () => (chat && chat.exited === undefined ? chat : undefined);
 
   const broadcast = (msg: unknown) => {
     const payload = JSON.stringify(msg);
@@ -110,7 +117,7 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
         const contextTokens = transcriptTokens(t.transcript);
         return { ...t, contextTokens, meter: meter({ map, events, thread: t, tokens: contextTokens, areas: all, agents, at: "view" }) };
       });
-    return { type: "state", project: projectName(map), map, areas: all.map((a) => ({ ...a, hasAgent: withAgent.has(a.id) })), threads };
+    return { type: "state", project: projectName(map), map, areas: all.map((a) => ({ ...a, hasAgent: withAgent.has(a.id) })), threads, chat: chat ? { id: chat.id, name: chat.name, ...(chat.exited !== undefined ? { exited: chat.exited } : {}) } : null };
   };
   const pushState = () => broadcast(state());
   const agentsNow = () => { const { map } = store.load(); return writeAgents(store.root, projectName(map), areas(map, events)); };
@@ -144,6 +151,30 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
       if (!old) writeThread(store.paths, launch.id, { name: launch.name, named: s(b.name) !== undefined, launched: true });
       pushState();
       return launch.name;
+    },
+    // Opens Claude Code inside the page. Same thread bookkeeping as the terminal window: the id is chosen here, so hooks report back to it.
+    "/api/chat/open": (b) => {
+      if (!local) throw new WeaveError("The embedded chat is only available when WEAVE listens on this machine.");
+      const open = liveChat();
+      if (open) return { id: open.id, name: open.name };
+      const resume = s(b.resume), old = resume ? readThreads(store.paths)[resume] : undefined;
+      if (resume && !old) throw new WeaveError("Unknown thread.");
+      const n = Math.max(0, ...Object.values(readThreads(store.paths)).map((x) => x.n ?? 0)) + 1;
+      const launch = chatLaunch({ name: s(b.name) ?? old?.name, fallback: `Thread ${n}`, resume });
+      chat = new ChatSession(launch, store.root, opts.pty ?? defaultPty);
+      chat.attach((m) => { if (m.type === "exit") pushState(); });
+      if (!old) writeThread(store.paths, launch.id, { name: launch.name, named: s(b.name) !== undefined, launched: true });
+      pushState();
+      return { id: launch.id, name: launch.name };
+    },
+    "/api/chat/close": () => { chat?.kill(); chat = undefined; pushState(); return true; },
+    // Only the two whitelisted commands can be typed for the user.
+    "/api/chat/command": (b) => {
+      const cmd = s(b.command) as ChatCommand | undefined, open = liveChat();
+      if (!cmd || !Object.hasOwn(COMMANDS, cmd)) throw new WeaveError("Unknown chat command.");
+      if (!open) throw new WeaveError("No chat is open.");
+      open.command(cmd);
+      return true;
     },
     "/api/rescan": () => { store.rescan(); agentsNow(); pushState(); return true; },
   };
@@ -180,7 +211,25 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
   });
 
   const wss = new WebSocketServer({ noServer: true });
+  const ptyWss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
   server.on("upgrade", (req, socket, head) => {
+    if ((req.url ?? "").split("?")[0] === "/pty") {
+      // The chat socket is stricter than the rest: one of our own pages must be asking, so an Origin is required.
+      const open = liveChat();
+      if (!local || !open || !req.headers.origin || !trusted(req)) return socket.destroy();
+      return ptyWss.handleUpgrade(req, socket, head, (ws) => {
+        const detach = open.attach((m) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m)); });
+        ws.on("message", (raw, binary) => {
+          if (binary) return;
+          let m: { type?: unknown; data?: unknown; cols?: unknown; rows?: unknown };
+          try { m = JSON.parse(raw.toString()); } catch { return; }
+          if (m.type === "input" && typeof m.data === "string") open.write(m.data);
+          else if (m.type === "resize") open.resize(Number(m.cols), Number(m.rows));
+        });
+        ws.on("close", detach);
+        ws.on("error", detach);
+      });
+    }
     if ((req.url ?? "").split("?")[0] !== "/ws" || !trusted(req)) return socket.destroy();
     wss.handleUpgrade(req, socket, head, (ws) => {
       clients.add(ws);
@@ -209,6 +258,16 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
     // Token counts in transcripts change without any event, so refresh open maps every 20 seconds.
     const tick = setInterval(() => { if (clients.size) pushState(); }, 20_000);
     watchers.push({ close: () => clearInterval(tick) });
+    // Automatic /compact is opt-in (settings.autoCompact). /clear is never sent without a click.
+    const manage = setInterval(() => {
+      const open = liveChat();
+      if (!open) return;
+      const { map } = store.load();
+      if (!map.settings.autoCompact || !map.settings.meter) return;
+      const t = state().threads.find((x) => x.id === open.id);
+      if (t && shouldAutoCompact({ auto: true, level: t.meter.level, quietMs: Date.now() - open.lastOutput, sinceLastMs: Date.now() - open.lastCommand })) open.command("compact");
+    }, 5000);
+    watchers.push({ close: () => clearInterval(manage) });
   }
 
   const startPort = opts.port ?? (Number(process.env.WEAVE_PORT) || 3000);
@@ -219,6 +278,8 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
     port,
     close: () => new Promise<void>((done) => {
       watchers.forEach((w) => w.close());
+      chat?.kill();
+      ptyWss.close();
       for (const ws of clients) ws.terminate();
       wss.close();
       server.close(() => done());

@@ -1,4 +1,7 @@
+import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
 import { MODE_FRAMES, paintFrame, resolvePreset } from "thinking-orbs/engine";
 import { curve, hull, layout, type Placed } from "./layout";
 
@@ -11,12 +14,13 @@ interface WNode { id: string; label: string; tier: Tier; kind: Kind; paths: stri
 interface Area { id: string; name: string; agent: string; features: string[]; folders: string[]; files: string[]; tokens: number; threads: number; from: "usage" | "folders"; hasAgent: boolean }
 interface Meter { level: Level; tokens?: number; window: number; share: number; stale: number; text?: string; agent?: string }
 interface Thread { id: string; name: string; startedAt: number; lastSeen: number; contextTokens?: number; meter: Meter }
-interface Settings { window: number; compactAt: number; meter: boolean; fresh: "command" | "thread" }
+interface Settings { window: number; compactAt: number; meter: boolean; fresh: "command" | "thread"; autoCompact: boolean }
 interface State {
   project: string;
   map: { nodes: WNode[]; settings: Settings };
   areas: Area[];
   threads: Thread[];
+  chat: { id: string; name: string; exited?: number } | null;
 }
 interface Activity { t: number; s: string; ph?: "start" | "end"; verb: Verb; node: string; path?: string; sub?: boolean }
 type Node = WNode & Placed;
@@ -447,6 +451,8 @@ function renderSettings() {
     b.setAttribute("aria-pressed", String(b.dataset.v === st.fresh));
     b.onclick = () => api("/api/settings", { fresh: b.dataset.v }).catch((e) => toast(e.message));
   });
+  $("autoCompact").setAttribute("aria-checked", String(st.autoCompact));
+  $("autoCompact").onclick = () => api("/api/settings", { autoCompact: !st.autoCompact }).catch((e) => toast(e.message));
   const input = $<HTMLInputElement>("compactAt");
   // A live update must not overwrite a number being typed.
   if (document.activeElement !== input) input.value = String(Math.round(st.compactAt * 100));
@@ -720,7 +726,69 @@ function renderAll() {
   renderAreas();
   renderThreads();
   renderSettings();
+  renderChat();
 }
+
+// ---------- Embedded chat ----------
+// Claude Code runs on this PC behind the local server; this is only its screen and keyboard.
+let term: Terminal | undefined, fitter: FitAddon | undefined, chatWs: WebSocket | undefined, chatId = "", chatShown = false;
+const sendChat = (msg: unknown) => { if (chatWs?.readyState === WebSocket.OPEN) chatWs.send(JSON.stringify(msg)); };
+function fitChat() {
+  if (!term || !fitter || !chatShown) return;
+  try { fitter.fit(); } catch { /* not laid out yet */ }
+}
+function attachChat(id: string) {
+  if (chatId !== id || !term) {
+    term?.dispose();
+    $("cterm").innerHTML = "";
+    const css = getComputedStyle(document.documentElement);
+    term = new Terminal({ cursorBlink: true, fontSize: 13, fontFamily: "ui-monospace, Consolas, monospace", scrollback: 5000,
+      theme: { background: css.getPropertyValue("--bg").trim() || "#0A0B0D", foreground: css.getPropertyValue("--fg").trim() || "#F0F0F1" } });
+    fitter = new FitAddon();
+    term.loadAddon(fitter);
+    term.open($("cterm"));
+    term.onData((data) => sendChat({ type: "input", data }));
+    term.onResize(({ cols, rows }) => sendChat({ type: "resize", cols, rows }));
+    chatId = id;
+  }
+  chatWs?.close();
+  const ws = chatWs = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/pty`);
+  ws.onopen = () => { term?.reset(); fitChat(); if (term) sendChat({ type: "resize", cols: term.cols, rows: term.rows }); };
+  ws.onmessage = (m) => {
+    const msg = JSON.parse(m.data);
+    if (msg.type === "output") term?.write(msg.data);
+    else if (msg.type === "exit") term?.write(`
+[Claude Code exited with code ${msg.code}]
+`);
+  };
+  ws.onclose = () => { if (chatWs === ws) chatWs = undefined; };
+}
+function renderChat() {
+  const c = S?.chat, live = !!c && c.exited === undefined;
+  $("chatbtn").textContent = live ? (chatShown ? "Hide chat" : "Show chat") : "Open chat";
+  $("chat").hidden = !(chatShown && c);
+  if (!c) { chatWs?.close(); chatWs = undefined; term?.dispose(); term = undefined; chatId = ""; chatShown = false; $("chatbtn").textContent = "Open chat"; return; }
+  $("chatname").textContent = c.name;
+  const t = S!.threads.find((x) => x.id === c.id), m = t?.meter;
+  $("chatctx").textContent = m?.tokens ? `${Math.round(m.share * 100)}% of window (${fmt(m.tokens)})` : "";
+  const level = live && S!.map.settings.meter ? m?.level : undefined;
+  $("chatcompact").hidden = level !== "compact";
+  $("chatclear").hidden = level !== "clear";
+  if (live && chatShown && (chatId !== c.id || !chatWs)) attachChat(c.id);
+  if (chatShown) requestAnimationFrame(fitChat);
+}
+$("chatbtn").onclick = async () => {
+  try {
+    if (!S?.chat) await api("/api/chat/open", {});
+    chatShown = !(chatShown && S?.chat);
+    renderChat();
+  } catch (e) { toast((e as Error).message); }
+};
+$("chathide").onclick = () => { chatShown = false; renderChat(); };
+$("chatclose").onclick = () => api("/api/chat/close").then(() => toast("Chat closed.")).catch((e) => toast(e.message));
+$("chatcompact").onclick = () => api("/api/chat/command", { command: "compact" }).then(() => toast("Sent /compact.")).catch((e) => toast(e.message));
+$("chatclear").onclick = () => api("/api/chat/command", { command: "clear" }).then(() => toast("Sent /clear.")).catch((e) => toast(e.message));
+new ResizeObserver(() => fitChat()).observe($("cterm"));
 
 let retry = 500;
 function connect() {

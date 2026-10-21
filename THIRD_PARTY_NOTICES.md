@@ -43,3 +43,11 @@ Copyright 2020 The Space Grotesk Project Authors (https://github.com/floriankars
 ```
 
 Full license text: https://openfontlicense.org
+
+## xterm.js
+
+Bundled in the map page through `@xterm/xterm` and `@xterm/addon-fit` to show the embedded chat, under the MIT License. See the packages' LICENSE files for the copyright holders.
+
+## node-pty
+
+The embedded chat runs Claude Code on a pseudo-terminal through `@lydell/node-pty` (a prebuilt distribution of Microsoft's node-pty), under the MIT License.

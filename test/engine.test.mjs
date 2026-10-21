@@ -2,12 +2,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { createServer, request } from "node:http";
+import { WebSocket } from "ws";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   ContextStore, scanProject, listenWithFallback, nodeForPath, handleHook, recentEvents, threadName, titleFrom, startDashboard,
   normalizeMap, appendEvent, readThreads, removeThreads, writeThread, areas, agentAreas, writeAgents, mapNote, MARK, meter, meterLine,
-  staleTokens, createTools, CLEAR_LOOK,
+  staleTokens, createTools, CLEAR_LOOK, chatLaunch, resolveClaude, shouldAutoCompact, AUTO_QUIET, AUTO_GAP,
 } from "../dist/index.js";
 
 function write(root, rel, text) {
@@ -81,7 +82,7 @@ test("a broken map is kept as a backup before it is rebuilt, and old maps keep t
   assert.equal(old.version, 3);
   assert.equal(old.nodes.length, 1);
   assert.equal("presets" in old, false);
-  assert.deepEqual(old.settings, { window: 50_000, compactAt: 0.6, meter: true, fresh: "command" }, "settings are clamped to safe values");
+  assert.deepEqual(old.settings, { window: 50_000, compactAt: 0.6, meter: true, fresh: "command", autoCompact: false }, "settings are clamped to safe values");
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -313,4 +314,71 @@ test("the map opens a terminal running Claude Code and tracks it under the id it
   }
   await d.close();
   rmSync(root, { recursive: true, force: true });
+});
+
+test("the chat launches only claude, with a generated or resumed id and a cleaned name", () => {
+  const claude = { file: "C:\bin\claude.exe", prefix: [] };
+  const a = chatLaunch({ name: 'x" & calc', fallback: "Thread 1" }, claude);
+  assert.equal(a.file, claude.file);
+  assert.deepEqual(a.args.slice(0, 1), ["--session-id"]);
+  assert.match(a.id, /^[0-9a-f-]{36}$/);
+  assert.equal(a.args.at(-1), "x calc");
+  const r = chatLaunch({ resume: a.id, fallback: "Thread 1" }, claude);
+  assert.deepEqual(r.args, ["--resume", a.id]);
+  assert.throws(() => chatLaunch({ resume: "x; calc", fallback: "T" }, claude), /session id/);
+  const shim = resolveClaude({ PATH: "C:\npm", ComSpec: "cmd.exe" }, "win32", (f) => f.endsWith("claude.cmd"));
+  assert.deepEqual(shim.prefix.slice(0, 2), ["/d", "/c"]);
+  assert.throws(() => resolveClaude({ PATH: "C:\npm" }, "win32", () => false), /PATH/);
+});
+
+test("automatic compact needs the setting, the compact level, a quiet screen and a gap", () => {
+  const ok = { auto: true, level: "compact", quietMs: AUTO_QUIET, sinceLastMs: AUTO_GAP };
+  assert.equal(shouldAutoCompact(ok), true);
+  assert.equal(shouldAutoCompact({ ...ok, auto: false }), false);
+  assert.equal(shouldAutoCompact({ ...ok, level: "clear" }), false);
+  assert.equal(shouldAutoCompact({ ...ok, quietMs: 1000 }), false);
+  assert.equal(shouldAutoCompact({ ...ok, sinceLastMs: 1000 }), false);
+});
+
+test("the embedded chat is local only, whitelists its commands and streams the terminal", async () => {
+  const root = project();
+  const written = [];
+  let emit, exit;
+  const pty = () => ({ onData: (cb) => { emit = cb; }, onExit: (cb) => { exit = cb; }, write: (d) => written.push(d), resize() {}, kill() {} });
+  const d = await startDashboard({ root, port: 3800, watch: false, pty });
+  const post = (path, body) => fetch(`${d.url}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((r) => r.json());
+  const origin = d.url;
+  const connect = (headers) => new Promise((done) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${d.port}/pty`, { headers });
+    ws.on("open", () => done(ws));
+    ws.on("error", () => done(null));
+    ws.on("unexpected-response", () => done(null));
+  });
+  try {
+    assert.equal(await connect({ origin }), null, "no chat yet");
+    assert.match((await post("/api/chat/command", { command: "compact" })).error, /No chat/);
+    const open = await post("/api/chat/open", {});
+    assert.equal(open.ok, true);
+    assert.equal((await fetch(`${d.url}/api/state`).then((r) => r.json())).chat.id, open.result.id);
+    assert.equal((await post("/api/chat/open", {})).result.id, open.result.id, "one chat at a time");
+    assert.equal(await connect({}), null, "an Origin is required");
+    assert.equal(await connect({ origin: "http://evil.example" }), null, "a foreign Origin is refused");
+    assert.equal(await connect({ origin, host: "evil.example" }), null, "a foreign Host is refused");
+    const ws = await connect({ origin });
+    assert.ok(ws, "our own page connects");
+    const got = new Promise((done) => ws.once("message", (m) => done(JSON.parse(m.toString()))));
+    emit("hello");
+    assert.deepEqual(await got, { type: "output", data: "hello" });
+    ws.send(JSON.stringify({ type: "input", data: "hi\r" }));
+    await new Promise((r) => setTimeout(r, 50));
+    assert.deepEqual(written, ["hi\r"]);
+    assert.match((await post("/api/chat/command", { command: "rm -rf" })).error, /Unknown/);
+    assert.equal((await post("/api/chat/command", { command: "compact" })).ok, true);
+    await new Promise((r) => setTimeout(r, 250));
+    assert.deepEqual(written.slice(1), ["/compact", "\r"]);
+    ws.close();
+    exit({ exitCode: 0 });
+    assert.equal((await fetch(`${d.url}/api/state`).then((r) => r.json())).chat.exited, 0);
+    assert.match((await post("/api/chat/command", { command: "clear" })).error, /No chat/);
+  } finally { await d.close(); }
 });

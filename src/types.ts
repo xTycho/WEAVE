@@ -34,6 +34,8 @@ export interface Settings {
   meter: boolean;
   /** "command" suggests /compact and /clear; "thread" suggests a new thread instead, for where slash commands cannot be typed. */
   fresh: "command" | "thread";
+  /** Let WEAVE type /compact into the embedded chat when the meter says so. Off: the chat shows a button instead. */
+  autoCompact: boolean;
 }
 
 export interface ContextMap {
