@@ -83,8 +83,9 @@ header::before { content: ""; position: absolute; inset: 0 0 auto; height: 3px; 
 
 /* Areas panel bar: the whole project's context, same shares as the header meter. Click clears the area filter. */
 
-.main { display: grid; grid-template-columns: 1fr clamp(320px, 26vw, 380px); min-height: 0; }
-@media (max-width: 860px) { .main { grid-template-columns: 1fr; grid-template-rows: 62vh auto; } .app { height: auto; } }
+.main { display: grid; grid-template-columns: clamp(320px, 26vw, 380px) 1fr; min-height: 0; }
+.main > aside { order: -1; }
+@media (max-width: 860px) { .main > aside { order: 0; } .main { grid-template-columns: 1fr; grid-template-rows: 62vh auto; } .app { height: auto; } }
 
 /* Canvas */
 .stage { position: relative; overflow: hidden; touch-action: none; cursor: grab; min-height: 360px;
@@ -253,8 +254,8 @@ header::before { content: ""; position: absolute; inset: 0 0 auto; height: 3px; 
 .hint { position: absolute; left: max(12px, env(safe-area-inset-left, 0px)); bottom: 12px; font-size: 12px; color: var(--dim); background: var(--bg); padding: 4px 8px; border-radius: 4px; }
 
 /* Rail */
-aside { border-left: 1px solid var(--line); overflow-y: auto; display: flex; flex-direction: column; min-height: 0; }
-@media (max-width: 860px) { aside { border-left: none; border-top: 1px solid var(--line); padding-left: max(0px, env(safe-area-inset-left, 0px)); padding-right: max(0px, env(safe-area-inset-right, 0px)); } }
+aside { border-right: 1px solid var(--line); overflow-y: auto; display: flex; flex-direction: column; min-height: 0; }
+@media (max-width: 860px) { aside { border-right: none; border-top: 1px solid var(--line); padding-left: max(0px, env(safe-area-inset-left, 0px)); padding-right: max(0px, env(safe-area-inset-right, 0px)); } }
 .panel { padding: 16px; border-bottom: 1px solid var(--line); display: grid; gap: 12px; }
 .panel h2 { margin: 0; }
 .legend { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; font-size: 12px; }

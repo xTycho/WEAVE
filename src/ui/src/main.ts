@@ -863,6 +863,7 @@ function renderChat() {
   const t = S!.threads.find((x) => x.id === c.id), m = t?.meter;
   $("chatctx").textContent = m?.tokens ? `${Math.round(m.share * 100)}% of window (${fmt(m.tokens)})` : "";
   const level = live && S!.map.settings.meter ? m?.level : undefined;
+  $("chathand").hidden = level !== "compact" && level !== "clear";
   $("chatcompact").hidden = level !== "compact";
   $("chatclear").hidden = level !== "clear";
   if (live && chatShown && (chatId !== c.id || !chatWs)) attachChat(c.id);
@@ -883,6 +884,19 @@ async function openChat(resume?: string, win?: string) {
 $("chatbtn").onclick = () => openChat();
 $("chathide").onclick = () => { chatShown = false; renderChat(); };
 $("chatclose").onclick = () => api("/api/chat/close").then(() => toast("Chat closed.")).catch((e) => toast(e.message));
+/** Meter says compact or clear: keep what the chat held as a saved window, end the chat, and start a new one from it. One click, never automatic. */
+$("chathand").onclick = async () => {
+  const c = S?.chat;
+  if (!c) return;
+  try {
+    const stamp = new Date().toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    const w = await api("/api/windows/save", { thread: c.id, name: `${c.name} · handed over ${stamp}`.replace(/[^\w .\-]/g, " ") });
+    await api("/api/chat/close");
+    await api("/api/chat/open", { window: w.id });
+    chatShown = true;
+    toast(`Saved ${w.files} file${w.files === 1 ? "" : "s"} and opened a new chat that starts with a note listing them.`);
+  } catch (e) { toast((e as Error).message); }
+};
 $("chatcompact").onclick = () => api("/api/chat/command", { command: "compact" }).then(() => toast("Sent /compact.")).catch((e) => toast(e.message));
 $("chatclear").onclick = () => api("/api/chat/command", { command: "clear" }).then(() => toast("Sent /clear.")).catch((e) => toast(e.message));
 new ResizeObserver(() => fitChat()).observe($("cterm"));
