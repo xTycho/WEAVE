@@ -238,6 +238,26 @@ test("an ended thread leaves the list while its activity stays", () => {
   rmSync(root, { recursive: true, force: true });
 });
 
+test("every tool call is live activity: it creates the thread row, keeps the transcript and bumps lastSeen", () => {
+  const root = project();
+  const store = new ContextStore(root);
+  store.rescan();
+  // A session WEAVE has no row for (Remote Control, or removed): a Bash call with no file path still registers it.
+  handleHook({ hook_event_name: "PostToolUse", session_id: "rc1", cwd: root, transcript_path: "/x/rc1.jsonl", tool_name: "Bash", tool_input: { command: "echo hi" } });
+  const first = readThreads(store.paths).rc1;
+  assert.ok(first, "thread row created from a tool event");
+  assert.equal(first.transcript, "/x/rc1.jsonl");
+  // A tool the map does not classify still refreshes lastSeen and keeps the transcript.
+  const before = first.lastSeen;
+  const wait = Date.now() + 5; while (Date.now() < wait) { /* ensure a later timestamp */ }
+  handleHook({ hook_event_name: "PostToolUse", session_id: "rc1", cwd: root, tool_name: "Bash", tool_input: {} });
+  const next = readThreads(store.paths).rc1;
+  assert.ok(next.lastSeen > before);
+  assert.equal(next.transcript, "/x/rc1.jsonl");
+  assert.equal(next.n, first.n, "same thread number");
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("MCP tools return areas and paths only", () => {
   const root = project();
   const tools = createTools(new ContextStore(root));

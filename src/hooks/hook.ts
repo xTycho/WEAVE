@@ -128,6 +128,11 @@ export function handleHook(input: HookInput, root = input.cwd ?? process.cwd()):
   }
 
   if (event !== "PostToolUse") return { exitCode: 0 };
+  // Every tool call is live activity, whatever it touches: it creates the thread row if the session has none (a Remote Control
+  // session, or one WEAVE dropped), records its transcript, and bumps lastSeen. The write wakes the dashboard, which re-reads
+  // the transcript's tokens and pushes state at once instead of waiting for the 20s tick.
+  const known = readThreads(store.paths)[session];
+  writeThread(store.paths, session, { transcript: input.transcript_path ?? known?.transcript });
   const title = titleFrom(input.tool_name ?? "", input.tool_input);
   if (title) { writeThread(store.paths, session, { name: title, named: true }); return { exitCode: 0 }; }
 
