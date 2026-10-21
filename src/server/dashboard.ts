@@ -283,7 +283,7 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
     wss.handleUpgrade(req, socket, head, (ws) => {
       clients.add(ws);
       ws.send(JSON.stringify(state()));
-      ws.send(JSON.stringify({ type: "history", events: events.slice(-40) }));
+      ws.send(JSON.stringify({ type: "history", events }));
       ws.on("close", () => clients.delete(ws));
       ws.on("error", () => clients.delete(ws));
     });

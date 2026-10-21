@@ -279,6 +279,22 @@ test("the map server shows areas and meters, refuses other pages, and survives b
   rmSync(root, { recursive: true, force: true });
 });
 
+test("a page that connects gets the whole recent log, so hot and cold cover every file a thread touched", async () => {
+  const root = project();
+  const store = new ContextStore(root);
+  mkdirSync(store.paths.weaveDir, { recursive: true });
+  for (let i = 0; i < 60; i++) appendEvent(store.paths, ev(Date.now() - (100 - i) * 1000, "t1", i % 2 ? "src/ui/App.tsx" : "src/lib/format.ts"));
+  const d = await startDashboard({ root, port: 3720, watch: false });
+  const history = await new Promise((done, fail) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${d.port}/ws`);
+    ws.on("message", (raw) => { const m = JSON.parse(raw.toString()); if (m.type === "history") { ws.close(); done(m); } });
+    ws.on("error", fail);
+  });
+  assert.equal(history.events.length, 60, "not only the last 40");
+  await d.close();
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("port allocation falls back to the next free port", async () => {
   const blocker = createServer();
   const base = await listenWithFallback(blocker, 3400, "127.0.0.1", 50);

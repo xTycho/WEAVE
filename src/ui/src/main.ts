@@ -731,6 +731,23 @@ function route(n: WNode): [string, string][] {
 }
 const back = (segs: [string, string][]) => segs.slice().reverse().map(([a, b]) => [a, b, true] as [string, string, boolean]);
 
+/** Records that a thread touched a node (subagent calls stay out). */
+function touch(e: Activity) {
+  const n = byId.get(e.node);
+  if (e.ph === "start" || e.sub || !n) return;
+  if (!touched.has(e.s)) touched.set(e.s, new Map());
+  const m = touched.get(e.s)!;
+  m.set(n.id, Math.max(e.t, m.get(n.id) ?? 0));
+}
+
+/** On connect the server sends its whole recent log: every event feeds hot and cold, only the last few fill the history list. */
+function onHistory(events: Activity[]) {
+  events.slice(0, -40).forEach(touch);
+  events.slice(-40).forEach((e) => onActivity(e, false));
+  computeLit();
+  draw();
+}
+
 function onActivity(e: Activity, animate: boolean) {
   // Logs from WEAVE 1 also hold "start" lines; every action has an end line.
   if (e.ph === "start") return;
@@ -738,9 +755,7 @@ function onActivity(e: Activity, animate: boolean) {
   if (!n || !S) return;
   log(e);
   if (!e.sub) {
-    if (!touched.has(e.s)) touched.set(e.s, new Map());
-    const m = touched.get(e.s)!;
-    m.set(n.id, Math.max(e.t, m.get(n.id) ?? 0));
+    touch(e);
     if (T === e.s) { computeLit(); if (animate) draw(); }
   }
   if (e.verb === "Edit") { if (!edited.has(e.s)) edited.set(e.s, new Set()); edited.get(e.s)!.add(n.id); }
@@ -1084,7 +1099,7 @@ function connect() {
   ws.onmessage = (m) => {
     const msg = JSON.parse(m.data);
     if (msg.type === "state") adopt(msg);
-    else if (msg.type === "history") (msg.events as Activity[]).forEach((e) => onActivity(e, false));
+    else if (msg.type === "history") onHistory(msg.events as Activity[]);
     else if (msg.type === "activity") (msg.events as Activity[]).forEach((e) => onActivity(e, true));
   };
   ws.onclose = () => {
