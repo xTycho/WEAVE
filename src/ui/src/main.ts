@@ -356,6 +356,7 @@ function threadRow(t: Thread): HTMLLIElement {
   const li = document.createElement("li");
   const verb = threadVerb(t.id), name = threadLabel(t), live = working(t.id), m = t.meter, tok = m.tokens ?? 0;
   const level = m.level === "clear" || m.level === "compact" ? "ctx-full" : m.level === "delegate" ? "ctx-heavy" : "ctx-ok";
+  const hotNow = m.level === "compact" || m.level === "clear";
   const inPage = S?.chat?.id === t.id, cold = Math.min(m.share, (m.stale || 0) / (m.window || 1)), hot = Math.max(0, Math.min(1, m.share) - cold);
   li.className = "thread" + (verb ? " busy" : live ? " live" : "") + ` ${level}` + (T === t.id ? " sel" : "");
   li.dataset.id = t.id;
@@ -369,11 +370,10 @@ function threadRow(t: Thread): HTMLLIElement {
     + `<button class="tmain" title="${esc(tip)}">${esc(name)}</button>`
     + (inPage ? `<span class="chip" title="Runs inside this page">In page</span>` : "<span hidden></span>")
     + `<span class="tbar" title="${esc(size)}"><i><u class="hot"></u><u class="cold"></u></i><small>${tok ? fmt(tok).replace(/\.\dk$/, "k") : ""}</small></span>`
-    + (LEVEL[m.level] ? `<span class="advice" title="${esc(m.text ?? "")}">${esc(LEVEL[m.level])}</span>` : "<span hidden></span>")
-    + (isActive(t) ? `<span class="active" title="Used in the last ${ACTIVE / MIN} minutes" aria-label="Active"></span>` : "<span hidden></span>")
-    + `<button class="ibtn save" title="Save this thread as a context window for a kind of task" aria-label="Save ${esc(name)} as a context window">${ICON_SAVE}</button>`
+    + `<span class="tacts"><button class="ibtn save" title="Save this thread as a context window for a kind of task" aria-label="Save ${esc(name)} as a context window">${ICON_SAVE}</button>`
     + `<button class="ibtn term" title="Reopen this thread in the chat" aria-label="Open ${esc(name)} in a terminal">${ICON_TERM}</button>`
-    + `<button class="ibtn end" title="End thread: clear it from the map. Areas keep what it taught them." aria-label="End thread ${esc(name)}">${ICON_END}</button>`;
+    + `<button class="ibtn end" title="End thread: clear it from the map. Areas keep what it taught them." aria-label="End thread ${esc(name)}">${ICON_END}</button></span>`
+    + (hotNow ? `<button class="cont" title="${esc((m.text ?? "") + " Continue in a new chat: WEAVE saves this thread's files as a window, ends this thread here, and opens a new in-page chat whose first message lists them. Nothing is preloaded.")}">Continue</button>` : "<span hidden></span>");
   const main = li.querySelector<HTMLButtonElement>(".tmain")!;
   main.addEventListener("dblclick", () => {
     naming = t.id;
@@ -393,6 +393,7 @@ function threadRow(t: Thread): HTMLLIElement {
     input.addEventListener("blur", () => end(true));
   });
   li.querySelector(".ibtn.term")!.addEventListener("click", () => openChat(t.id));
+  li.querySelector(".cont")?.addEventListener("click", () => handOver(t.id));
   li.querySelector(".ibtn.save")!.addEventListener("click", () => {
     const w = prompt("Name this context window for a kind of task", name);
     if (w?.trim()) api("/api/windows/save", { thread: t.id, name: w.trim() }).then((r) => toast(`Saved "${w.trim()}": ${r.files} file${r.files === 1 ? "" : "s"}.`)).catch((e) => toast(e.message));
@@ -876,18 +877,21 @@ $("chatbtn").onclick = () => openChat();
 $("chathide").onclick = () => { chatShown = false; renderChat(); };
 $("chatclose").onclick = () => api("/api/chat/close").then(() => toast("Chat closed.")).catch((e) => toast(e.message));
 /** Meter says compact or clear: keep what the chat held as a saved window, end the chat, and start a new one from it. One click, never automatic. */
-$("chathand").onclick = async () => {
-  const c = S?.chat;
-  if (!c) return;
+$("chathand").onclick = () => { if (S?.chat) handOver(S.chat.id); };
+async function handOver(id: string) {
+  const c = S?.chat, t = S?.threads.find((x) => x.id === id);
+  if (c && c.id !== id) return toast("Close the open chat first. One chat at a time.");
+  const name = c?.id === id ? c.name : t ? threadLabel(t) : "Thread";
   try {
     const stamp = new Date().toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-    const w = await api("/api/windows/save", { thread: c.id, name: `${c.name} · handed over ${stamp}`.replace(/[^\w .\-]/g, " ") });
-    await api("/api/chat/close");
+    const w = await api("/api/windows/save", { thread: id, name: `${name} · handed over ${stamp}`.replace(/[^\w .\-]/g, " ") });
+    if (c) await api("/api/chat/close");
+    else await api("/api/threads/end", { thread: id });
     await api("/api/chat/open", { window: w.id });
     chatShown = true;
     toast(`Saved ${w.files} file${w.files === 1 ? "" : "s"} and opened a new chat that starts with a note listing them.`);
   } catch (e) { toast((e as Error).message); }
-};
+}
 $("chatcompact").onclick = () => api("/api/chat/command", { command: "compact" }).then(() => toast("Sent /compact.")).catch((e) => toast(e.message));
 $("chatclear").onclick = () => api("/api/chat/command", { command: "clear" }).then(() => toast("Sent /clear.")).catch((e) => toast(e.message));
 new ResizeObserver(() => fitChat()).observe($("cterm"));

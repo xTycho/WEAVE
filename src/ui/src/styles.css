@@ -388,3 +388,15 @@ button:disabled { opacity: .5; cursor: default; }
 .fold-areas[open] { gap: 12px; }
 .conn { margin-left: auto; }
 .thread .active { width: 7px; height: 7px; padding: 0; border-radius: 50%; }
+/* Thread rows: fixed columns so nothing overlaps; actions show on hover; Continue only when the thread is too hot. */
+.thread { grid-template-columns: 16px minmax(0, 1fr) auto 64px auto auto; gap: 8px; }
+.thread .tbar { width: 64px; }
+.thread .tbar small { min-width: 28px; }
+.tacts { display: flex; gap: 2px; }
+.tacts .ibtn { opacity: 0; }
+.thread:hover .tacts .ibtn, .tacts .ibtn:focus-visible { opacity: 1; }
+.cont { height: 22px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--red); background: transparent; color: var(--red); font: 600 10.5px/1 var(--body); letter-spacing: .04em; cursor: pointer; white-space: nowrap; }
+.cont:hover { background: var(--red); color: var(--bg); }
+.thread { position: relative; grid-template-columns: 16px minmax(0, 1fr) auto 64px auto; }
+.tacts { position: absolute; right: 4px; top: 3px; padding: 0 2px; border-radius: 6px; background: var(--surface-2); display: none; }
+.thread:hover .tacts, .tacts:focus-within { display: flex; }
