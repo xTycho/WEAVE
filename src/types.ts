@@ -32,10 +32,6 @@ export interface Settings {
   compactAt: number;
   /** Tell threads when to /compact, /clear or hand work to an area's subagent. */
   meter: boolean;
-  /** "command" suggests /compact and /clear; "thread" suggests a new thread instead, for where slash commands cannot be typed. */
-  fresh: "command" | "thread";
-  /** Let WEAVE type /compact into the embedded chat when the meter says so. Off: the chat shows a button instead. */
-  autoCompact: boolean;
 }
 
 /** A thread's context window saved for a kind of task: the files it held, so a new chat can be pointed at them. */
@@ -112,6 +108,8 @@ export interface ThreadInfo {
   named?: boolean;
   /** Opened from the map's terminal button, so WEAVE chose its id and name. */
   launched?: boolean;
+  /** When Claude Code last finished a turn (its Stop hook). A permission question is not a stop. */
+  stopped?: number;
   startedAt: number;
   lastSeen: number;
   transcript?: string;

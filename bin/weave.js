@@ -95,7 +95,7 @@ async function init() {
       const entry = { type: "command", command: hookCommand(root) };
       const ours = (g) => (g.hooks ?? []).some((h) => String(h.command ?? "").includes(" hook --dir ") && String(h.command).includes("weave"));
       // WEAVE 1 also hooked PreToolUse; that entry is removed and not added back.
-      for (const event of ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse"]) {
+      for (const event of ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"]) {
         const list = (settings.hooks[event] ?? []).filter((g) => !ours(g));
         if (event === "PostToolUse") list.push({ matcher: TOOL_MATCHER, hooks: [entry] });
         else if (event !== "PreToolUse") list.push({ hooks: [entry] });

@@ -11,13 +11,13 @@ export interface LoadedMap {
 }
 
 const KINDS: Kind[] = ["core", "feature", "code", "design", "doc", "test", "tool"];
-export const DEFAULT_SETTINGS: Settings = { window: 200_000, compactAt: 0.6, meter: true, fresh: "command", autoCompact: false };
+export const DEFAULT_SETTINGS: Settings = { window: 200_000, compactAt: 0.6, meter: true };
 
 /** The window stays between 50k and 2M tokens; compact sits between 30% and 95% of it. */
 export function settingsFrom(raw: Record<string, unknown>): Settings {
   const window = Math.min(2_000_000, Math.max(50_000, Math.round(Number(raw.window)) || DEFAULT_SETTINGS.window));
   const at = Number(raw.compactAt);
-  return { window, compactAt: Number.isFinite(at) && at > 0 ? Math.min(0.95, Math.max(0.3, at)) : DEFAULT_SETTINGS.compactAt, meter: raw.meter !== false, fresh: raw.fresh === "thread" ? "thread" : "command", autoCompact: raw.autoCompact === true };
+  return { window, compactAt: Number.isFinite(at) && at > 0 ? Math.min(0.95, Math.max(0.3, at)) : DEFAULT_SETTINGS.compactAt, meter: raw.meter !== false };
 }
 
 const str = (v: unknown, d = "") => (typeof v === "string" ? v : d);

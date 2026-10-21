@@ -283,14 +283,14 @@ export async function startDashboard(opts: DashboardOptions = {}): Promise<Dashb
     // Token counts in transcripts change without any event, so refresh open maps every 20 seconds.
     const tick = setInterval(() => { if (clients.size) pushState(); }, 20_000);
     watchers.push({ close: () => clearInterval(tick) });
-    // Automatic /compact is opt-in (settings.autoCompact). /clear is never sent without a click.
+    // /compact is typed for the in-page chat once Claude Code finishes a task. /clear is never sent without a click.
     const manage = setInterval(() => {
       const open = liveChat();
       if (!open) return;
       const { map } = store.load();
-      if (!map.settings.autoCompact || !map.settings.meter) return;
+      if (!map.settings.meter) return;
       const t = state().threads.find((x) => x.id === open.id);
-      if (t && shouldAutoCompact({ auto: true, level: t.meter.level, quietMs: Date.now() - open.lastOutput, sinceLastMs: Date.now() - open.lastCommand })) open.command("compact");
+      if (t && shouldAutoCompact({ level: t.meter.level, stoppedAt: t.stopped, promptAt: t.prompts?.at(-1), lastCommandAt: open.lastCommand, quietMs: Date.now() - open.lastOutput, sinceLastMs: Date.now() - open.lastCommand })) open.command("compact");
     }, 5000);
     watchers.push({ close: () => clearInterval(manage) });
   }

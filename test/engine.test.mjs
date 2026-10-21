@@ -82,7 +82,7 @@ test("a broken map is kept as a backup before it is rebuilt, and old maps keep t
   assert.equal(old.version, 3);
   assert.equal(old.nodes.length, 1);
   assert.equal("presets" in old, false);
-  assert.deepEqual(old.settings, { window: 50_000, compactAt: 0.6, meter: true, fresh: "command", autoCompact: false }, "settings are clamped to safe values");
+  assert.deepEqual(old.settings, { window: 50_000, compactAt: 0.6, meter: true }, "settings are clamped to safe values");
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -145,9 +145,7 @@ test("the meter says /compact when the thread is nearly full or mostly stale", (
   assert.equal(meter({ ...base, events: [], thread, tokens: 100_000 }).level, "ok");
   const full = meter({ ...base, events: [], thread, tokens: 170_000 });
   assert.equal(full.level, "compact");
-  assert.match(meterLine(full), /Run \/compact\. Only the user can do this/);
-  const app = meter({ ...base, map: { ...map, settings: { ...map.settings, fresh: "thread" } }, events: [ev(now - MIN, "t1", "src/ui/App.tsx", "Edit")], thread: { ...thread, asks: ["Restyle the ui"] }, tokens: 170_000 });
-  assert.match(app.text, /Start a new thread for the next task\. Carry-over: task "Restyle the ui"; edited src\/ui\/App\.tsx\./, "where /compact cannot be typed, the advice is a new thread");
+  assert.match(meterLine(full), /getting too hot.*nearly full.*Only the user can do this/);
   const events = [ev(now - 40 * MIN, "t1", "src/api/big.ts"), ev(now - MIN, "t1", "src/ui/App.tsx")];
   assert.equal(staleTokens(map, events, "t1", thread.prompts), 40_000);
   assert.equal(meter({ ...base, events, thread, tokens: 130_000 }).level, "compact", "past compactAt with a quarter stale");
@@ -199,7 +197,7 @@ test("hooks give the map note, log only finished calls, and speak at most once p
   assert.ok(existsSync(join(root, ".claude/agents/weave-src-ui.md")), "the session start writes the subagents");
   const tx = transcript(root, "t1", 170_000);
   const prompt = handleHook({ hook_event_name: "UserPromptSubmit", session_id: "t1", cwd: root, transcript_path: tx, prompt: "<wake>x</wake> Fix the header" });
-  assert.match(JSON.parse(prompt.stdout).hookSpecificOutput.additionalContext, /Run \/compact/);
+  assert.match(JSON.parse(prompt.stdout).hookSpecificOutput.additionalContext, /getting too hot/);
   assert.equal(readThreads(store.paths).t1.name, "Thread 1", "threads are numbered, not named after a prompt");
   assert.equal(readThreads(store.paths).t1.asks.at(-1), "Fix the header", "the prompt's first line is kept for the carry-over");
   const read = { hook_event_name: "PostToolUse", session_id: "t1", cwd: root, tool_name: "Read", tool_input: { file_path: join(root, "src/lib/format.ts") } };
@@ -332,9 +330,11 @@ test("the chat launches only claude, with a generated or resumed id and a cleane
 });
 
 test("automatic compact needs the setting, the compact level, a quiet screen and a gap", () => {
-  const ok = { auto: true, level: "compact", quietMs: AUTO_QUIET, sinceLastMs: AUTO_GAP };
+  const ok = { level: "compact", promptAt: 1000, stoppedAt: 2000, lastCommandAt: 0, quietMs: AUTO_QUIET, sinceLastMs: AUTO_GAP };
   assert.equal(shouldAutoCompact(ok), true);
-  assert.equal(shouldAutoCompact({ ...ok, auto: false }), false);
+  assert.equal(shouldAutoCompact({ ...ok, stoppedAt: undefined }), false, "no stop yet: Claude may be waiting on a permission answer");
+  assert.equal(shouldAutoCompact({ ...ok, stoppedAt: 500 }), false, "the last stop is from before the latest message, so Claude is mid-task");
+  assert.equal(shouldAutoCompact({ ...ok, lastCommandAt: 2500 }), false, "one /compact per finished task");
   assert.equal(shouldAutoCompact({ ...ok, level: "clear" }), false);
   assert.equal(shouldAutoCompact({ ...ok, quietMs: 1000 }), false);
   assert.equal(shouldAutoCompact({ ...ok, sinceLastMs: 1000 }), false);
@@ -395,4 +395,15 @@ test("a saved window becomes a first note that only points at safe file paths", 
   const claude = { file: "claude", prefix: [] };
   assert.equal(chatLaunch({ fallback: "T", note }, claude).args.at(-1), note);
   assert.ok(!chatLaunch({ fallback: "T", note, resume: "0123456789abcdef0123456789abcdef0123" }, claude).args.includes(note), "resume never gets a note");
+});
+
+test("the Stop hook records when Claude Code finished a turn", () => {
+  const root = project();
+  const store = new ContextStore(root);
+  store.rescan();
+  writeThread(store.paths, "s1", { transcript: undefined });
+  assert.equal(readThreads(store.paths).s1.stopped, undefined);
+  handleHook({ hook_event_name: "Stop", session_id: "s1", cwd: root }, root);
+  assert.ok(readThreads(store.paths).s1.stopped > 0);
+  rmSync(root, { recursive: true, force: true });
 });

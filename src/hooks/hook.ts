@@ -105,6 +105,12 @@ export function handleHook(input: HookInput, root = input.cwd ?? process.cwd()):
     return note ? context("SessionStart", note) : { exitCode: 0 };
   }
 
+  // Claude Code finished its turn. The embedded chat compacts at this point, never while a question waits for an answer.
+  if (event === "Stop") {
+    writeThread(store.paths, session, { stopped: Date.now() });
+    return { exitCode: 0 };
+  }
+
   if (event === "UserPromptSubmit") {
     const prev = readThreads(store.paths)[session];
     const ask = threadName(input.prompt ?? "");

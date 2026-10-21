@@ -24,7 +24,7 @@ export type ChatCommand = keyof typeof COMMANDS;
 /** Output kept so a page that reconnects sees the screen so far. */
 const BUFFER = 256 * 1024;
 /** Automatic /compact waits for this much quiet output (Claude Code is not streaming) and this long since the last one. */
-export const AUTO_QUIET = 8000;
+export const AUTO_QUIET = 3000;
 export const AUTO_GAP = 120_000;
 
 export interface ChatLaunch { id: string; name: string; file: string; args: string[] }
@@ -65,9 +65,14 @@ export function chatLaunch(opts: { name?: string; fallback: string; resume?: str
   return { id, name, file: claude.file, args: [...claude.prefix, ...args] };
 }
 
-/** Whether WEAVE should type /compact into the chat now. Fixed rule: only when the setting is on, the meter says compact, the screen is quiet, and the last one was a while ago. */
-export function shouldAutoCompact(i: { auto: boolean; level: string; quietMs: number; sinceLastMs: number }): boolean {
-  return i.auto && i.level === "compact" && i.quietMs >= AUTO_QUIET && i.sinceLastMs >= AUTO_GAP;
+/**
+ * Whether WEAVE should type /compact into the chat now. Fixed rule: the meter says compact, Claude Code has finished
+ * its turn since the last message (its Stop hook fired, which a permission question never does), the screen has been
+ * quiet a moment, and no /compact has been sent since that stop or within the last two minutes.
+ */
+export function shouldAutoCompact(i: { level: string; stoppedAt?: number; promptAt?: number; lastCommandAt: number; quietMs: number; sinceLastMs: number }): boolean {
+  const done = i.stoppedAt !== undefined && i.stoppedAt >= (i.promptAt ?? 0) && i.stoppedAt > i.lastCommandAt;
+  return i.level === "compact" && done && i.quietMs >= AUTO_QUIET && i.sinceLastMs >= AUTO_GAP;
 }
 
 /** One Claude Code session on a pseudo-terminal, shared by whichever pages are attached. */

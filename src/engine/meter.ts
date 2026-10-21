@@ -7,8 +7,9 @@ import { featureOf, k, nodeIndex } from "./map.js";
  * The meter. Fixed rules over a thread's token count (from its transcript)
  * and the activity log, no model involved. A thread hears at most one line
  * per user message, and only the user can run /compact or /clear. With
- * `fresh` set to "thread" (for the app, where they cannot be typed), both
- * become "start a new thread" with a carry-over line.
+ * Where WEAVE cannot type them (the app, a terminal of its own) the thread is
+ * only told it is getting too hot; the embedded chat is compacted for the user
+ * once Claude Code finishes its turn.
  *
  *  - Compact: from COMPACT_NOW of the window, or from `compactAt` when at least
  *    STALE_SHARE of the thread is files it has moved on from. A file has been
@@ -110,9 +111,7 @@ export interface MeterInput {
 
 /** The meter for one thread right now. */
 export function meter({ map, events, thread, tokens, agents, at, root }: MeterInput): Meter {
-  const { window, compactAt, fresh } = map.settings;
-  // Where /compact and /clear cannot be typed (the app, a project thread), the advice is a new thread with a carry-over line.
-  const thread_ = fresh === "thread";
+  const { window, compactAt } = map.settings;
   const share = tokens ? tokens / window : 0;
   const stale = staleTokens(map, events, thread.id, thread.prompts);
   const base: Meter = { level: "ok", tokens, window, share, stale };
@@ -122,9 +121,7 @@ export function meter({ map, events, thread, tokens, agents, at, root }: MeterIn
   const compact = share >= COMPACT_NOW || (share >= compactAt && stale >= STALE_SHARE * tokens);
   if (compact && at !== "tool") {
     const why = share >= COMPACT_NOW ? "nearly full" : `~${k(stale)} of it is files it has moved on from`;
-    if (!thread_) return { ...base, level: "compact", text: `This thread holds ${full} and ${why}. Run /compact.` };
-    const carry = carryOver(map, events, thread, root, true);
-    return { ...base, level: "compact", text: `This thread holds ${full} and ${why}. Start a new thread for the next task.${carry ? ` ${carry}` : ""}` };
+    return { ...base, level: "compact", text: `This thread is getting too hot: it holds ${full} and ${why}.` };
   }
   if (at === "prompt") return base;
 
@@ -133,7 +130,7 @@ export function meter({ map, events, thread, tokens, agents, at, root }: MeterIn
   if (share >= CLEAR_MIN && before.size >= 2 && now.size >= 2 && actions <= CLEAR_LOOK && [...featNow].every((f) => !featBefore.has(f))) {
     const where = [...featNow].map((f) => nodes.get(f)?.paths[0] ?? f).join(", ");
     const carry = carryOver(map, events, thread, root);
-    return { ...base, level: "clear", text: `This message works in ${where}, which nothing earlier in this thread touched, and the thread holds ${full}. ${thread_ ? "Start a new thread for this request." : "Run /clear and send the request again."}${carry ? ` ${carry}` : ""}` };
+    return { ...base, level: "clear", text: `This message works in ${where}, which nothing earlier in this thread touched, and the thread holds ${full}. Run /clear and send the request again.${carry ? ` ${carry}` : ""}` };
   }
   if (share >= DELEGATE_AT && now.size) {
     const hit = new Set([...now].map((id) => areaOf(agents, nodes.get(id))));
