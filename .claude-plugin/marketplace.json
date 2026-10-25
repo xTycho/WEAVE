@@ -1,0 +1,12 @@
+{
+  "name": "weave-mods",
+  "description": "Claude Code mods from WEAVE.",
+  "owner": { "name": "xTycho" },
+  "plugins": [
+    {
+      "name": "weave-panel",
+      "source": "./mods/weave-panel",
+      "description": "A live WEAVE panel under Claude's text, with an expand button for the folder heat view."
+    }
+  ]
+}

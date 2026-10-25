@@ -6,7 +6,18 @@ The button at the top right grows the same box in place to the folder and heat v
 
 Fixed rules only, no AI: a tool call becomes a folder and a file from its path (the first two folders under the project), `Bash` is a Shell node under the project, and `gh pr` or `git push` is a PR node.
 
-## Try it
+## Install (terminal and desktop app)
+
+In Claude Code, run these two commands, then start a new session:
+
+```
+/plugin marketplace add C:path	oWEAVE
+/plugin install weave-panel@weave-mods
+```
+
+From GitHub instead: `/plugin install weave-panel --marketplace xTycho/WEAVE`.
+
+## Try it without installing
 
 From a checkout of WEAVE:
 
