@@ -11,7 +11,7 @@ Fixed rules only, no AI: a tool call becomes a folder and a file from its path (
 In Claude Code, run these two commands, then start a new session:
 
 ```
-/plugin marketplace add C:path	oWEAVE
+/plugin marketplace add C:/path/to/WEAVE
 /plugin install weave-panel@weave-mods
 ```
 
