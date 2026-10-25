@@ -28,6 +28,7 @@
     "bin",
     "dist",
     "src/ui/dist",
+    "mods",
     "templates",
     "README.md",
     "AI_SETUP.md",

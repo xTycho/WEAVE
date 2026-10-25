@@ -51,3 +51,7 @@ Bundled in the map page through `@xterm/xterm` and `@xterm/addon-fit` to show th
 ## node-pty
 
 The embedded chat runs Claude Code on a pseudo-terminal through `@lydell/node-pty` (a prebuilt distribution of Microsoft's node-pty), under the MIT License.
+
+## thinking-orbs (Claude Code mod)
+
+`mods/weave-panel/hooks/orbs.ts` holds frames baked from the thinking-orbs engine (MIT License, Copyright (c) 2026 Jakub Antalik) by `scripts/gen-orbs.mjs`, so the Claude Code panel draws the same dots as the map.

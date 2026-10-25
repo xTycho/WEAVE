@@ -1,0 +1,6 @@
+{
+  "name": "weave-panel",
+  "version": "0.1.0",
+  "description": "A live WEAVE panel under Claude's text: the files and folders being worked on, with an expand button for the folder heat view.",
+  "types": "./types/index.d.ts"
+}
