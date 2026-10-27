@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 360" width="900" height="360" font-family="'Space Grotesk','Segoe UI',system-ui,sans-serif" font-size="15">
+<defs><radialGradient id="o"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#fff" stop-opacity=".35"/></radialGradient></defs>
+<rect width="900" height="360" rx="14" fill="#1e1e1e"/>
+<text x="32" y="44" fill="#9a9aa4">Reading the scanner and updating the activity log…</text>
+<path d="M20 112V80a12 12 0 0 1 12-12h836a12 12 0 0 1 12 12v32z" fill="#E9A6D2"/>
+<g fill="#0A0B0D">
+<text x="46" y="98" font-family="Righteous,'Arial Rounded MT Bold','Trebuchet MS',sans-serif" font-weight="bold" font-size="22">WEAVE</text>
+<circle cx="148" cy="90" r="10" fill="url(#o)"/>
+<text x="170" y="95" font-weight="bold">src/scanner/index.ts</text>
+<g opacity=".62" font-size="13"><text x="330" y="95">3s</text><text x="500" y="95">Grep</text><text x="552" y="95">package.json</text><text x="640" y="95">README.md</text></g>
+<rect x="744" y="78" width="112" height="28" rx="10" fill-opacity=".12" stroke="#0A0B0D" stroke-opacity=".28"/>
+<text x="764" y="97">21 calls ▴</text>
+</g>
+<g font-size="11" letter-spacing="1.6" fill="#6c6c76"><text x="46" y="146">SRC/SCANNER</text><text x="46" y="262">SRC/ENGINE</text></g>
+<g fill="#e9e9ec"><text x="46" y="174" fill="#E9A6D2" font-weight="bold">src/scanner/index.ts</text><text x="46" y="200">walk.ts</text><text x="46" y="226">ignore.ts</text><text x="46" y="290">window.ts</text><text x="46" y="316">rules.ts</text></g>
+<g fill="#E9A6D2"><text x="150" y="200">×4</text><text x="150" y="316">×2</text></g>
+<text x="800" y="174" font-size="14" fill="#E9A6D2" text-anchor="end">3s</text>
+<g font-size="12" fill="#6c6c76" text-anchor="end"><text x="868" y="200">Done · 0s</text><text x="868" y="226">Done · 2s</text><text x="868" y="290">Done · 0s</text><text x="868" y="316">Done · 1s</text></g>
+</svg>

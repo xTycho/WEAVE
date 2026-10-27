@@ -1,5 +1,9 @@
 # WEAVE
 
+![WEAVE panel in Claude Code Desktop](docs/panel-bar.svg)
+
+*The WEAVE bar fills with the task colour while Claude works, and the dropdown unfolds the folder tree.*
+
 **A map of your project that keeps Claude's threads small.** WEAVE runs on your computer and does two things:
 
 1. **It hands work to small subagents.** It splits the project into areas and writes one Claude Code subagent per area. A subagent works in its own context window and returns a short summary, so the thread that delegated stays small.
