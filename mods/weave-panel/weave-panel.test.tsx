@@ -43,10 +43,10 @@ test('the panel lists the turn, then expands, on both surfaces', async ($, on) =
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...BAND, surface })
-    expect((await ui.find({ type: 'Text', text: /src\/ui/ }))?.text).toBe('src/ui')
     expect(await ui.find({ type: 'Text', text: /main\.ts/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /SRC\/UI/ })).toBeFalsy()
     await ui.press({ key: 'expand' })
-    expect(await ui.find({ type: 'Text', text: /1 folders/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: /SRC\/UI/ })).toBeTruthy()
     await ui.press({ key: 'expand' })
     await ui.unmount()
   }

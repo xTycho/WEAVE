@@ -6,11 +6,8 @@ import { ORB_FRAMES, ORB_SECONDS } from './orbs'
 
 // The colours WEAVE's map uses for what is being done, and its heat steps, coolest first.
 const COLOR: Record<Verb, string> = { Read: '#A3A9E6', Edit: '#E9A6D2', Run: '#F6BE8A', PR: '#CFE19C' }
-const ING: Record<Verb, string> = { Read: 'Reading', Edit: 'Editing', Run: 'Running', PR: 'Opening PR' }
-const HEAT = ['#A3A9E6', '#C3A5DD', '#E9A6D2', '#F6BE8A', '#F1A9B0']
-const heat = (n: number) => HEAT[n >= 11 ? 4 : n >= 7 ? 3 : n >= 4 ? 2 : n >= 2 ? 1 : 0]
+const HEAT = ['#A3A9E6']
 const SPIN = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-const FOLDER = 'M1.5 4.5a1 1 0 0 1 1-1h3.6l1.4 1.5h6a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z'
 
 const calls = atom({ plugin: 'weave-panel', key: 'calls' } as const, [])
 const isOpen = atom({ plugin: 'weave-panel', key: 'isOpen' } as const, false)
@@ -50,7 +47,7 @@ export function classify(
 }
 
 /** The thinking-orbs animation WEAVE's map draws, baked into one looping SVG in the verb's colour. */
-export function orbSvg(verb: Verb): string {
+export function orbSvg(verb: Verb, fill: string = COLOR[verb]): string {
   const frames = ORB_FRAMES[verb]
   const n = frames.length
   const body = frames
@@ -63,11 +60,15 @@ export function orbSvg(verb: Verb): string {
     })
     .join('')
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" width="20" height="20" fill="${COLOR[verb]}">${body}</svg>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" width="20" height="20" fill="${fill}"><style>@media (prefers-reduced-motion:reduce){g{display:none}g:first-of-type{display:inline}}</style>${body}</svg>`
 }
 
-export function folderSvg(tint: string): string {
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="14" height="14"><path d="${FOLDER}" fill="none" stroke="${tint}" stroke-width="1.5" stroke-linejoin="round"/></svg>`
+/** The WEAVE wordmark: pastel spectrum when idle, solid near-black on a task colour. */
+export function wordmarkSvg(solid?: string): string {
+  const fill = solid ?? 'url(#w)'
+  const defs = solid ? '' : '<defs><linearGradient id="w" x1="0" x2="1" y1="0" y2="0"><stop offset="0" stop-color="#A3A9E6"/><stop offset=".55" stop-color="#CFE19C"/><stop offset="1" stop-color="#F6BE8A"/></linearGradient></defs>'
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 84 26" width="84" height="26">${defs}<text x="0" y="21" font-family="Righteous, 'Space Grotesk', sans-serif" font-size="22" letter-spacing="1" fill="${fill}">WEAVE</text></svg>`
 }
 
 const seconds = (c: Call, at: number) => `${Math.max(0, Math.round(((c.status === 'run' ? at : c.end) - c.start) / 1000))}s`
@@ -146,58 +147,56 @@ export const register: Register = on => {
         ? ($.ui.resolve(e) as unknown as { Svg: (p: Record<string, unknown>) => never }).Svg({ source, alt, width: size, height: size, isInteractive: true })
         : null
 
-    // Collapsed: this turn's files grouped by folder, the last three folders, three files each.
-    // Expanded: everything touched this session, each file tinted by how often it was touched.
+    // The bar counts this turn's calls; the dropdown lists everything touched this session.
     const folders = new Map<string, Map<string, Call[]>>()
-    for (const c of open ? list : mine) {
+    for (const c of open ? list : []) {
       const files = folders.get(c.folder) ?? new Map<string, Call[]>()
       files.set(c.name, [...(files.get(c.name) ?? []), c])
       folders.set(c.folder, files)
     }
-    const shown = open ? [...folders] : [...folders].slice(-3)
-    const running = mine.filter(c => c.status === 'run').length
+    const current = [...mine].reverse().find(c => c.status === 'run')
+    const task = live ? (current ?? mine[mine.length - 1]) : undefined
+    const INK = '#0A0B0D'
+    const ink2 = 'rgba(10,11,13,.62)'
+    const recent = [...new Set([...mine].reverse().map(c => c.name))].filter(n => n !== task?.name).slice(0, 3)
+    const wordmark = svg(wordmarkSvg(task ? INK : undefined), 'WEAVE', 84)
 
     return (
-      <Box flexDirection="column" borderStyle="round" borderColor="#8E95DB" paddingX={1}>
-        <Box flexDirection="row" justifyContent="space-between">
-          <Text dimColor>
-            {`WEAVE · ${live ? 'live' : 'last turn'} · ${open ? `${folders.size} folders` : `${mine.length} calls`}${running ? ` · ${running} running` : ''}`}
-          </Text>
-          <Button key="expand" label={open ? '⤡ collapse' : '⤢ expand'} onPress={() => update($, isOpen, v => !v)} />
+      <Box flexDirection="column">
+        <Box flexDirection="row" alignItems="center" justifyContent="space-between" gap={2} paddingX={1} backgroundColor={task ? COLOR[task.verb] : undefined}>
+          <Box flexDirection="row" alignItems="center" gap={1} flexShrink={0}>
+            {wordmark ?? <Text bold color={task ? INK : HEAT[0]}>WEAVE</Text>}
+            {task ? (svg(orbSvg(task.verb, '#FFFFFF'), 'working', 20) ?? <Text color={INK}>{glyph}</Text>) : null}
+            {task ? <Text bold color={INK}>{task.name}</Text> : null}
+            {task ? <Text color={ink2}>{seconds(task, at)}</Text> : null}
+          </Box>
+          <Box flexDirection="row" gap={3} flexShrink={1} flexGrow={1} overflow="hidden" justifyContent="flex-end">
+            {recent.map(n => (
+              <Text dimColor={!task} color={task ? ink2 : undefined}>{n}</Text>
+            ))}
+          </Box>
+          <Button key="expand" label={`${mine.length} calls ${open ? '▴' : '▾'}`} onPress={() => update($, isOpen, v => !v)} />
         </Box>
-        {shown.map(([folder, files]) => {
-          const all = [...files.values()].flat()
-          const tint = all.some(c => c.status === 'run') ? COLOR[all[all.length - 1].verb] : HEAT[0]
-          const entries = [...files].slice(open ? -12 : -3)
+        {[...folders].map(([folder, files]) => (
+          <Box flexDirection="column" paddingX={1} marginTop={1}>
+            <Text dimColor>{folder.toUpperCase()}</Text>
+            {[...files].slice(-12).map(([name, hits]) => {
+              const c = hits[hits.length - 1]
+              const isRun = c.status === 'run'
+              const color = isRun ? COLOR[c.verb] : undefined
+              const status = isRun ? 'Running' : c.status === 'err' ? 'Failed' : 'Done'
 
-          return (
-            <Box flexDirection="column">
-              <Box flexDirection="row" gap={1}>
-                {svg(folderSvg(tint), 'folder', 14) ?? <Text color={tint}>▭</Text>}
-                <Text dimColor>{folder}</Text>
-              </Box>
-              {entries.map(([name, hits], i) => {
-                const c = hits[hits.length - 1]
-                const isRun = c.status === 'run'
-                const color = open && !isRun ? heat(hits.length) : COLOR[c.verb]
-                const status = isRun ? ING[c.verb] : c.status === 'err' ? 'Failed' : 'Done'
-
-                return (
-                  <Box flexDirection="row" gap={1} alignItems="center">
-                    <Text color={color}>{i === entries.length - 1 ? ' ╰┄' : ' ├┄'}</Text>
-                    <Text color={color}>▌</Text>
-                    {isRun ? (svg(orbSvg(c.verb), ING[c.verb], 20) ?? <Text color={color}>{glyph}</Text>) : <Text color={color}>•</Text>}
-                    <Text dimColor={!isRun}>{name}</Text>
-                    <Box flexGrow={1} />
-                    {open && hits.length > 1 ? <Text color={color}>{`×${hits.length}`}</Text> : null}
-                    <Text dimColor>{`${status} · ${seconds(c, at)}`}</Text>
-                    <Text color={color}>{isRun ? '●' : '○'}</Text>
-                  </Box>
-                )
-              })}
-            </Box>
-          )
-        })}
+              return (
+                <Box flexDirection="row" gap={1}>
+                  <Text color={color} dimColor={!isRun}>{name}</Text>
+                  <Box flexGrow={1} />
+                  {hits.length > 1 ? <Text color="#E9A6D2">{`×${hits.length}`}</Text> : null}
+                  <Text color={color} dimColor={!isRun}>{`${status} · ${seconds(c, at)}`}</Text>
+                </Box>
+              )
+            })}
+          </Box>
+        ))}
       </Box>
     )
   })
